@@ -1,0 +1,704 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>2.5D Renderer and Live Level Editor</title>
+  <style>
+    :root {
+      --bg: #111;
+      --panel-bg: #1a1a1a;
+      --text: #eee;
+      --accent: #4a9eff;
+      --toolbar-bg: #222;
+      --btn-bg: #333;
+      --btn-hover: #444;
+      --btn-active: #4a9eff;
+    }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      touch-action: none;
+    }
+    #app {
+      display: flex;
+      flex-direction: row;
+      width: 100vw;
+      height: 100vh;
+    }
+    #viewPanel, #mapPanel {
+      position: relative;
+      flex: 1;
+      min-width: 0;
+      min-height: 0;
+      background: var(--panel-bg);
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      touch-action: none;
+    }
+    #toolbar {
+      position: absolute;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      background: var(--toolbar-bg);
+      padding: 6px 10px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      z-index: 10;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .tool-btn {
+      background: var(--btn-bg);
+      color: var(--text);
+      border: 2px solid transparent;
+      padding: 8px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      min-width: 44px;
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.1s, border-color 0.1s;
+    }
+    .tool-btn:hover { background: var(--btn-hover); }
+    .tool-btn.active { background: var(--btn-active); border-color: #fff; }
+    
+    #mobileControls {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 5;
+    }
+    .joystick-zone {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      width: 120px;
+      height: 120px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 50%;
+      pointer-events: auto;
+      touch-action: none;
+    }
+    .joystick-knob {
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 50px; height: 50px;
+      background: rgba(255,255,255,0.4);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    .look-zone {
+      position: absolute;
+      top: 0; right: 0;
+      width: 50%; height: 100%;
+      pointer-events: auto;
+      touch-action: none;
+    }
+    .shoot-zone {
+      position: absolute;
+      bottom: 20px; right: 20px;
+      width: 60px; height: 60px;
+      background: rgba(255, 50, 50, 0.3);
+      border: 2px solid rgba(255, 50, 50, 0.6);
+      border-radius: 50%;
+      pointer-events: auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      user-select: none;
+    }
+
+    #modalOverlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.8);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    #modalContent {
+      background: var(--panel-bg);
+      padding: 20px;
+      border-radius: 10px;
+      width: 90%;
+      max-width: 600px;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    #jsonInput {
+      width: 100%;
+      height: 200px;
+      background: #000;
+      color: #0f0;
+      border: 1px solid #444;
+      padding: 10px;
+      font-family: monospace;
+      margin: 10px 0;
+      resize: vertical;
+    }
+    .modal-btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-right: 10px;
+    }
+    .modal-btn.secondary { background: #555; }
+
+    @media (max-width: 768px) {
+      #app { flex-direction: column; }
+      #viewPanel { flex: 1.2; }
+      #mapPanel { flex: 0.8; }
+      .joystick-zone { bottom: 10px; left: 10px; width: 100px; height: 100px; }
+      .shoot-zone { bottom: 10px; right: 10px; width: 50px; height: 50px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <section id="viewPanel">
+      <canvas id="viewCanvas"></canvas>
+      <div id="mobileControls">
+        <div id="joystickZone" class="joystick-zone"><div id="joystickKnob" class="joystick-knob"></div></div>
+        <div id="lookZone" class="look-zone"></div>
+        <div id="shootZone" class="shoot-zone">🔫</div>
+      </div>
+    </section>
+    <section id="mapPanel">
+      <canvas id="mapCanvas"></canvas>
+      <div id="toolbar">
+        <button class="tool-btn active" data-tool="wall">Wall</button>
+        <button class="tool-btn" data-tool="dino">Dino</button>
+        <button class="tool-btn" data-tool="erase">Erase</button>
+        <button class="tool-btn" id="btnExport">Export</button>
+        <button class="tool-btn" id="btnImport">Import</button>
+        <button class="tool-btn" id="btnReset">Reset</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="modalOverlay">
+    <div id="modalContent">
+      <h3>Level JSON</h3>
+      <textarea id="jsonInput"></textarea>
+      <div>
+        <button class="modal-btn" id="btnSaveModal">Load</button>
+        <button class="modal-btn secondary" id="btnCloseModal">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    'use strict';
+
+    // 1. Constants
+    const INTERNAL_VIEW_WIDTH = 480;
+    const INTERNAL_VIEW_HEIGHT = 270;
+    const MAP_CELL_SIZE = 32;
+    const PLAYER_RADIUS = 0.25;
+    const WEAPON_DAMAGE = 50;
+    const SHOOT_CONE = 0.05;
+    const EDITOR_TOOLS = { WALL: 'wall', DINO: 'dinosaur', ERASE: 'erase' };
+
+    // 2. State
+    const appState = {
+      level: null,
+      player: { x: 2.5, y: 2.5, angle: 0, fov: Math.PI / 3, renderDistance: 12, moveSpeed: 3.0, turnSpeed: 2.4 },
+      editor: {
+        selectedTool: EDITOR_TOOLS.WALL,
+        hoveredCell: { x: null, y: null }
+      },
+      input: {
+        keys: {},
+        mobileMove: { x: 0, y: 0 },
+        mobileLook: 0,
+        pointer: { x: 0, y: 0, down: false }
+      },
+      assets: { textures: {}, sprites: {} },
+      depthBuffer: new Float32Array(INTERNAL_VIEW_WIDTH)
+    };
+
+    // 3. Asset Generation
+    function generateTexture(name, size, drawFn) {
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const ctx = c.getContext('2d');
+      drawFn(ctx, size);
+      appState.assets.textures[name] = c;
+      return c;
+    }
+
+    function generateSprite(name, size, drawFn) {
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const ctx = c.getContext('2d');
+      drawFn(ctx, size);
+      appState.assets.sprites[name] = c;
+      return c;
+    }
+
+    function initAssets() {
+      generateTexture('wall_brick_01', 64, (ctx, s) => {
+        ctx.fillStyle = '#7a2f22'; ctx.fillRect(0,0,s,s);
+        ctx.strokeStyle = '#30100c'; ctx.lineWidth = 2;
+        for(let y=0; y<s; y+=16) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(s,y); ctx.stroke(); }
+        for(let y=0; y<s; y+=16) { const off=(y/16)%2*16; for(let x=-off; x<s; x+=32) { ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x,y+16); ctx.stroke(); } }
+      });
+      generateTexture('floor_stone_01', 64, (ctx, s) => {
+        ctx.fillStyle = '#333'; ctx.fillRect(0,0,s,s);
+        ctx.fillStyle = '#444'; for(let i=0;i<20;i++) ctx.fillRect(Math.random()*s, Math.random()*s, 4, 4);
+      });
+      generateTexture('ceiling_metal_01', 64, (ctx, s) => {
+        ctx.fillStyle = '#2a2a2a'; ctx.fillRect(0,0,s,s);
+        ctx.strokeStyle = '#444'; ctx.lineWidth=1;
+        ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(s,s); ctx.moveTo(s,0); ctx.lineTo(0,s); ctx.stroke();
+      });
+      generateSprite('dino_raptor_01', 64, (ctx, s) => {
+        ctx.fillStyle = '#2d5a27'; ctx.beginPath(); ctx.ellipse(s/2, s/2, s/3, s/4, 0, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#1a3a15'; ctx.beginPath(); ctx.arc(s/2, s/3, s/6, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#ff0'; ctx.fillRect(s/2-2, s/3-2, 4, 4);
+      });
+      generateSprite('dino_dead', 64, (ctx, s) => {
+        ctx.globalAlpha = 0.6;
+        ctx.fillStyle = '#555'; ctx.fillRect(s/4, s/2, s/2, s/4);
+        ctx.globalAlpha = 1;
+      });
+    }
+
+    // 4. Level Creation
+    function createDefaultLevel() {
+      const w = 16, h = 16;
+      const cells = new Array(w * h).fill(null).map((_, i) => ({
+        type: 'empty', wallTexture: null, floorTexture: 'floor_stone_01', ceilingTexture: 'ceiling_metal_01', blocking: false
+      }));
+      // Boundary walls
+      for(let x=0; x<w; x++) { setCell(cells, x, 0, 'wall', 'wall_brick_01'); setCell(cells, x, h-1, 'wall', 'wall_brick_01'); }
+      for(let y=0; y<h; y++) { setCell(cells, 0, y, 'wall', 'wall_brick_01'); setCell(cells, w-1, y, 'wall', 'wall_brick_01'); }
+      // Simple layout
+      setCell(cells, 5, 5, 'wall', 'wall_brick_01'); setCell(cells, 6, 5, 'wall', 'wall_brick_01');
+      setCell(cells, 5, 6, 'wall', 'wall_brick_01');
+      return {
+        version: 1, width: w, height: h, defaultFloor: 'floor_stone_01', defaultCeiling: 'ceiling_metal_01',
+        playerStart: { x: 2.5, y: 2.5, angle: 0 },
+        cells, entities: [{ id: 'd1', type: 'dinosaur', x: 8.5, y: 8.5, radius: 0.3, sprite: 'dino_raptor_01', health: 100, state: 'idle', blocking: true }]
+      };
+    }
+
+    function setCell(arr, x, y, type, tex) {
+      const i = y * appState.level.width + x;
+      arr[i] = { type, wallTexture: tex, floorTexture: appState.level.defaultFloor, ceilingTexture: appState.level.defaultCeiling, blocking: type === 'wall' };
+    }
+
+    // 5. Input Handling
+    function initInput() {
+      window.addEventListener('keydown', e => { appState.input.keys[e.code] = true; if(e.code==='Space') { e.preventDefault(); shoot(); } });
+      window.addEventListener('keyup', e => appState.input.keys[e.code] = false);
+      
+      const mapC = document.getElementById('mapCanvas');
+      mapC.addEventListener('pointerdown', e => handleMapPointer(e, true));
+      mapC.addEventListener('pointermove', e => {
+        const rect = mapC.getBoundingClientRect();
+        appState.editor.hoveredCell = getCellFromMapCoords(e.clientX - rect.left, e.clientY - rect.top);
+      });
+      mapC.addEventListener('pointerup', e => handleMapPointer(e, false));
+
+      // Mobile
+      const joyZone = document.getElementById('joystickZone');
+      const joyKnob = document.getElementById('joystickKnob');
+      const lookZone = document.getElementById('lookZone');
+      const shootZone = document.getElementById('shootZone');
+      let joyTouch = null;
+      let lookTouch = null;
+
+      joyZone.addEventListener('touchstart', e => { e.preventDefault(); joyTouch = e.changedTouches[0].identifier; });
+      joyZone.addEventListener('touchmove', e => {
+        e.preventDefault();
+        for(let t of e.changedTouches) {
+          if(t.identifier === joyTouch) {
+            const rect = joyZone.getBoundingClientRect();
+            const cx = rect.left + rect.width/2, cy = rect.top + rect.height/2;
+            let dx = t.clientX - cx, dy = t.clientY - cy;
+            const dist = Math.sqrt(dx*dx+dy*dy);
+            const maxDist = rect.width/2 - 25;
+            if(dist > maxDist) { dx = dx/dist*maxDist; dy = dy/dist*maxDist; }
+            joyKnob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+            appState.input.mobileMove.x = dx / maxDist;
+            appState.input.mobileMove.y = dy / maxDist;
+          }
+        }
+      });
+      joyZone.addEventListener('touchend', e => {
+        for(let t of e.changedTouches) if(t.identifier === joyTouch) {
+          joyTouch = null; joyKnob.style.transform = 'translate(-50%, -50%)';
+          appState.input.mobileMove.x = 0; appState.input.mobileMove.y = 0;
+        }
+      });
+
+      lookZone.addEventListener('touchstart', e => { e.preventDefault(); lookTouch = e.changedTouches[0].identifier; });
+      lookZone.addEventListener('touchmove', e => {
+        e.preventDefault();
+        for(let t of e.changedTouches) {
+          if(t.identifier === lookTouch) {
+            appState.input.mobileLook += (t.clientX - t.lastX) * 0.005;
+          }
+        }
+      });
+      lookZone.addEventListener('touchend', e => { for(let t of e.changedTouches) if(t.identifier === lookTouch) lookTouch = null; });
+
+      shootZone.addEventListener('touchstart', e => { e.preventDefault(); shoot(); });
+    }
+
+    function handleMapPointer(e, isDown) {
+      if(e.button !== 0 && e.pointerType === 'mouse') return;
+      const rect = e.target.getBoundingClientRect();
+      const cell = getCellFromMapCoords(e.clientX - rect.left, e.clientY - rect.top);
+      if(!cell || cell.x < 0 || cell.x >= appState.level.width || cell.y < 0 || cell.y >= appState.level.height) return;
+      applyEditorTool(cell.x, cell.y);
+    }
+
+    function getCellFromMapCoords(px, py) {
+      const mapW = document.getElementById('mapCanvas').width;
+      const mapH = document.getElementById('mapCanvas').height;
+      return { x: Math.floor(px / (mapW / appState.level.width)), y: Math.floor(py / (mapH / appState.level.height)) };
+    }
+
+    // 6. Collision & Movement
+    function collides(x, y, r) {
+      const gridX = Math.floor(x), gridY = Math.floor(y);
+      if(gridX < 0 || gridX >= appState.level.width || gridY < 0 || gridY >= appState.level.height) return true;
+      if(appState.level.cells[gridY * appState.level.width + gridX].blocking) return true;
+      for(const e of appState.level.entities) {
+        if(e.state !== 'dead' && e.blocking) {
+          const dx = x - e.x, dy = y - e.y;
+          if(Math.sqrt(dx*dx+dy*dy) < r + e.radius) return true;
+        }
+      }
+      return false;
+    }
+
+    function movePlayer(dt) {
+      let dx = 0, dy = 0;
+      if(appState.input.keys['KeyW'] || appState.input.keys['ArrowUp']) dy -= 1;
+      if(appState.input.keys['KeyS'] || appState.input.keys['ArrowDown']) dy += 1;
+      if(appState.input.keys['KeyA']) dx -= 1;
+      if(appState.input.keys['KeyD']) dx += 1;
+      dx += appState.input.mobileMove.x;
+      dy += appState.input.mobileMove.y;
+      
+      const len = Math.sqrt(dx*dx+dy*dy);
+      if(len > 0) { dx /= len; dy /= len; }
+      
+      const moveX = dx * appState.player.moveSpeed * dt;
+      const moveY = dy * appState.player.moveSpeed * dt;
+      
+      if(!collides(appState.player.x + moveX, appState.player.y, PLAYER_RADIUS)) appState.player.x += moveX;
+      if(!collides(appState.player.x, appState.player.y + moveY, PLAYER_RADIUS)) appState.player.y += moveY;
+      
+      let turn = 0;
+      if(appState.input.keys['ArrowLeft']) turn -= 1;
+      if(appState.input.keys['ArrowRight']) turn += 1;
+      turn += appState.input.mobileLook;
+      appState.player.angle += turn * appState.player.turnSpeed * dt;
+      if(turn !== 0) appState.input.mobileLook = 0; // Reset continuous look
+    }
+
+    // 7. Raycasting & Rendering
+    function castWallRay(ox, oy, angle, dist) {
+      const sin = Math.sin(angle), cos = Math.cos(angle);
+      const dirX = cos, dirY = sin;
+      let mapX = Math.floor(ox), mapY = Math.floor(oy);
+      const deltaDistX = Math.abs(1 / dirX) || 1e30;
+      const deltaDistY = Math.abs(1 / dirY) || 1e30;
+      let stepX, stepY, sideDistX, sideDistY;
+      if(dirX < 0) { stepX = -1; sideDistX = (ox - mapX) * deltaDistX; }
+      else { stepX = 1; sideDistX = (mapX + 1 - ox) * deltaDistX; }
+      if(dirY < 0) { stepY = -1; sideDistY = (oy - mapY) * deltaDistY; }
+      else { stepY = 1; sideDistY = (mapY + 1 - oy) * deltaDistY; }
+      
+      let side = 0, hit = false, d = 0;
+      while(!hit && d < dist) {
+        if(sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; side = 0; }
+        else { sideDistY += deltaDistY; mapY += stepY; side = 1; }
+        if(mapX < 0 || mapX >= appState.level.width || mapY < 0 || mapY >= appState.level.height) { hit = true; d = dist; }
+        else if(appState.level.cells[mapY * appState.level.width + mapX].blocking) { hit = true; d = (side === 0 ? sideDistX - deltaDistX : sideDistY - deltaDistY); }
+      }
+      let wallX = side === 0 ? oy + d * dirY : ox + d * dirX;
+      wallX -= Math.floor(wallX);
+      return { dist: d, side, wallX, mapX, mapY };
+    }
+
+    function projectEntity(e) {
+      const dx = e.x - appState.player.x, dy = e.y - appState.player.y;
+      const dist = Math.sqrt(dx*dx+dy*dy);
+      const angleTo = Math.atan2(dy, dx);
+      let rel = angleTo - appState.player.angle;
+      while(rel > Math.PI) rel -= Math.PI*2;
+      while(rel < -Math.PI) rel += Math.PI*2;
+      if(Math.abs(rel) > appState.player.fov / 2) return null;
+      const screenX = INTERNAL_VIEW_WIDTH / 2 + Math.tan(rel) / Math.tan(appState.player.fov / 2) * INTERNAL_VIEW_WIDTH / 2;
+      const size = INTERNAL_VIEW_HEIGHT / dist;
+      return { e, dist, screenX, screenY: INTERNAL_VIEW_HEIGHT / 2, width: size, height: size };
+    }
+
+    function renderFirstPerson() {
+      const cvs = document.getElementById('viewCanvas');
+      const ctx = cvs.getContext('2d');
+      cvs.width = INTERNAL_VIEW_WIDTH; cvs.height = INTERNAL_VIEW_HEIGHT;
+      
+      // Clear
+      ctx.fillStyle = '#000'; ctx.fillRect(0,0,INTERNAL_VIEW_WIDTH, INTERNAL_VIEW_HEIGHT);
+      
+      // Draw Floor/Ceiling
+      ctx.fillStyle = '#111'; ctx.fillRect(0, 0, INTERNAL_VIEW_WIDTH, INTERNAL_VIEW_HEIGHT);
+      const floorTex = appState.assets.textures[appState.level.defaultFloor];
+      const ceilTex = appState.assets.textures[appState.level.defaultCeiling];
+      
+      // Simple scanline floor/ceiling
+      for(let row = 0; row < INTERNAL_VIEW_HEIGHT; row++) {
+        const currentDist = INTERNAL_VIEW_HEIGHT / (3 * (0.5 - row / INTERNAL_VIEW_HEIGHT));
+        if(currentDist < 0.1) continue;
+        const rayAngle = appState.player.angle - appState.player.fov/2 + (row/INTERNAL_VIEW_HEIGHT)*appState.player.fov; // Approx for demo
+        // Correct approach per column is better, but for single-file simplicity we use distance scaling
+        // Full correct implementation iterates columns. Here we approximate for performance in v1.
+      }
+      
+      // Correct Column-based rendering
+      appState.depthBuffer.fill(Infinity);
+      for(let x = 0; x < INTERNAL_VIEW_WIDTH; x++) {
+        const camX = 2 * x / INTERNAL_VIEW_WIDTH - 1;
+        const rayAngle = appState.player.angle + camX * appState.player.fov / 2;
+        const hit = castWallRay(appState.player.x, appState.player.y, rayAngle, appState.player.renderDistance);
+        const perpDist = hit.dist * Math.cos(rayAngle - appState.player.angle);
+        appState.depthBuffer[x] = perpDist;
+        
+        const lineHeight = Math.floor(INTERNAL_VIEW_HEIGHT / perpDist);
+        const drawStart = Math.max(0, Math.floor(-lineHeight / 2 + INTERNAL_VIEW_HEIGHT / 2));
+        const drawEnd = Math.min(INTERNAL_VIEW_HEIGHT - 1, Math.floor(lineHeight / 2 + INTERNAL_VIEW_HEIGHT / 2));
+        
+        const tex = appState.level.cells[hit.mapY * appState.level.width + hit.mapX].wallTexture;
+        const img = appState.assets.textures[tex] || appState.assets.textures['wall_brick_01'];
+        const texX = Math.floor(hit.wallX * img.width);
+        
+        ctx.drawImage(img, texX, 0, 1, img.height, x, drawStart, 1, drawEnd - drawStart);
+        
+        // Floor
+        const floorImg = appState.assets.textures[appState.level.defaultFloor];
+        for(let y = drawEnd; y < INTERNAL_VIEW_HEIGHT; y++) {
+          const dist = INTERNAL_VIEW_HEIGHT / (2.0 * y - INTERNAL_VIEW_HEIGHT);
+          const worldX = appState.player.x + Math.cos(rayAngle) * dist;
+          const worldY = appState.player.y + Math.sin(rayAngle) * dist;
+          const tx = Math.floor(worldX * floorImg.width) % floorImg.width;
+          const ty = Math.floor(worldY * floorImg.height) % floorImg.height;
+          ctx.drawImage(floorImg, tx, ty, 1, 1, x, y, 1, 1);
+        }
+        // Ceiling
+        for(let y = 0; y < drawStart; y++) {
+          const dist = INTERNAL_VIEW_HEIGHT / (INTERNAL_VIEW_HEIGHT - 2.0 * y);
+          const worldX = appState.player.x + Math.cos(rayAngle) * dist;
+          const worldY = appState.player.y + Math.sin(rayAngle) * dist;
+          const tx = Math.floor(worldX * floorImg.width) % floorImg.width;
+          const ty = Math.floor(worldY * floorImg.height) % floorImg.height;
+          ctx.drawImage(floorImg, tx, ty, 1, 1, x, y, 1, 1);
+        }
+      }
+      
+      // Sprites
+      const sprites = appState.level.entities.map(projectEntity).filter(Boolean);
+      sprites.sort((a,b) => b.dist - a.dist);
+      for(const sp of sprites) {
+        const img = appState.assets.sprites[sp.e.sprite];
+        const startX = Math.floor(sp.screenX - sp.width/2);
+        const startY = Math.floor(sp.screenY - sp.height/2);
+        for(let x = Math.max(0, startX); x < Math.min(INTERNAL_VIEW_WIDTH, startX + sp.width); x++) {
+          if(appState.depthBuffer[x] > sp.dist) {
+            const texX = Math.floor((x - startX) * img.width / sp.width);
+            ctx.drawImage(img, texX, 0, 1, img.height, x, startY, 1, sp.height);
+          }
+        }
+      }
+    }
+
+    // 8. Map Editor & Renderer
+    function renderMap() {
+      const cvs = document.getElementById('mapCanvas');
+      const ctx = cvs.getContext('2d');
+      const w = cvs.width = cvs.parentElement.clientWidth;
+      const h = cvs.height = cvs.parentElement.clientHeight;
+      const cellW = w / appState.level.width;
+      const cellH = h / appState.level.height;
+      
+      ctx.fillStyle = '#000'; ctx.fillRect(0,0,w,h);
+      
+      // Cells
+      for(let y=0; y<appState.level.height; y++) {
+        for(let x=0; x<appState.level.width; x++) {
+          const cell = appState.level.cells[y*appState.level.width+x];
+          const px = x*cellW, py = y*cellH;
+          if(cell.type === 'wall') {
+            const tex = appState.assets.textures[cell.wallTexture];
+            if(tex) ctx.drawImage(tex, px, py, cellW, cellH);
+            else ctx.fillStyle = '#555'; ctx.fillRect(px,py,cellW,cellH);
+          } else {
+            ctx.fillStyle = '#111'; ctx.fillRect(px,py,cellW,cellH);
+          }
+          ctx.strokeStyle = '#333'; ctx.strokeRect(px,py,cellW,cellH);
+        }
+      }
+      
+      // Entities
+      for(const e of appState.level.entities) {
+        const ex = e.x * cellW, ey = e.y * cellH;
+        ctx.fillStyle = e.state === 'dead' ? '#888' : '#2d5a27';
+        ctx.beginPath(); ctx.arc(ex, ey, cellW*0.3, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.font = `${cellW*0.4}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText(e.state==='dead'?'💀':'🦖', ex, ey);
+      }
+      
+      // Player
+      const px = appState.player.x * cellW, py = appState.player.y * cellH;
+      ctx.fillStyle = '#4a9eff'; ctx.beginPath(); ctx.arc(px, py, cellW*0.2, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(px,py);
+      ctx.lineTo(px + Math.cos(appState.player.angle)*cellW, py + Math.sin(appState.player.angle)*cellW); ctx.stroke();
+      
+      // FOV
+      ctx.fillStyle = 'rgba(74, 158, 255, 0.2)';
+      ctx.beginPath(); ctx.moveTo(px, py);
+      ctx.arc(px, py, appState.player.renderDistance * cellW, appState.player.angle - appState.player.fov/2, appState.player.angle + appState.player.fov/2);
+      ctx.closePath(); ctx.fill();
+      
+      // Hover
+      const hCell = appState.editor.hoveredCell;
+      if(hCell.x !== null) {
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+        ctx.strokeRect(hCell.x*cellW, hCell.y*cellH, cellW, cellH);
+      }
+    }
+
+    function applyEditorTool(x, y) {
+      const i = y * appState.level.width + x;
+      const cell = appState.level.cells[i];
+      const px = appState.player.x, py = appState.player.y;
+      
+      if(x === Math.floor(px) && y === Math.floor(py)) return; // Can't edit under player
+      
+      if(appState.editor.selectedTool === EDITOR_TOOLS.WALL) {
+        if(cell.type === 'empty') {
+          cell.type = 'wall'; cell.wallTexture = 'wall_brick_01'; cell.blocking = true;
+        }
+      } else if(appState.editor.selectedTool === EDITOR_TOOLS.DINO) {
+        if(cell.type === 'empty') {
+          const id = 'dino_' + Date.now();
+          appState.level.entities.push({ id, type: 'dinosaur', x: x+0.5, y: y+0.5, radius: 0.3, sprite: 'dino_raptor_01', health: 100, state: 'idle', blocking: true });
+        }
+      } else if(appState.editor.selectedTool === EDITOR_TOOLS.ERASE) {
+        if(cell.type === 'wall') { cell.type = 'empty'; cell.wallTexture = null; cell.blocking = false; }
+        appState.level.entities = appState.level.entities.filter(e => !(Math.floor(e.x)===x && Math.floor(e.y)===y));
+      }
+    }
+
+    // 9. Combat
+    function shoot() {
+      const wallHit = castWallRay(appState.player.x, appState.player.y, appState.player.angle, appState.player.renderDistance);
+      const aimAngle = appState.player.angle;
+      let closest = null, minDist = wallHit.dist;
+      
+      for(const e of appState.level.entities) {
+        if(e.state === 'dead') continue;
+        const dx = e.x - appState.player.x, dy = e.y - appState.player.y;
+        const dist = Math.sqrt(dx*dx+dy*dy);
+        if(dist > minDist) continue;
+        const angleTo = Math.atan2(dy, dx);
+        let rel = angleTo - aimAngle;
+        while(rel > Math.PI) rel -= Math.PI*2; while(rel < -Math.PI) rel += Math.PI*2;
+        if(Math.abs(rel) < SHOOT_CONE && dist < minDist) { closest = e; minDist = dist; }
+      }
+      
+      if(closest) {
+        closest.health -= WEAPON_DAMAGE;
+        if(closest.health <= 0) { closest.state = 'dead'; closest.blocking = false; closest.sprite = 'dino_dead'; }
+      }
+    }
+
+    // 10. Save/Load
+    function openModal() {
+      document.getElementById('modalOverlay').style.display = 'flex';
+      document.getElementById('jsonInput').value = JSON.stringify(appState.level, null, 2);
+    }
+    function closeModal() { document.getElementById('modalOverlay').style.display = 'none'; }
+    function loadLevel() {
+      try {
+        const data = JSON.parse(document.getElementById('jsonInput').value);
+        if(!data.cells || !data.entities || data.width <= 0 || data.height <= 0) throw new Error('Invalid structure');
+        appState.level = data;
+        appState.player.x = data.playerStart.x;
+        appState.player.y = data.playerStart.y;
+        appState.player.angle = data.playerStart.angle;
+        closeModal();
+      } catch(e) { alert('Invalid JSON: ' + e.message); }
+    }
+
+    // 11. Main Loop
+    let lastTime = 0;
+    function frame(now) {
+      const dt = Math.min((now - lastTime) / 1000, 0.05);
+      lastTime = now;
+      
+      movePlayer(dt);
+      renderFirstPerson();
+      renderMap();
+      
+      requestAnimationFrame(frame);
+    }
+
+    // 12. Initialization
+    function init() {
+      initAssets();
+      appState.level = createDefaultLevel();
+      appState.player.x = appState.level.playerStart.x;
+      appState.player.y = appState.level.playerStart.y;
+      appState.player.angle = appState.level.playerStart.angle;
+      
+      initInput();
+      
+      document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          appState.editor.selectedTool = btn.dataset.tool;
+        });
+      });
+      
+      document.getElementById('btnExport').onclick = openModal;
+      document.getElementById('btnImport').onclick = openModal;
+      document.getElementById('btnSaveModal').onclick = loadLevel;
+      document.getElementById('btnCloseModal').onclick = closeModal;
+      document.getElementById('btnReset').onclick = () => { appState.level = createDefaultLevel(); appState.player.x = appState.level.playerStart.x; appState.player.y = appState.level.playerStart.y; appState.player.angle = appState.level.playerStart.angle; };
+      
+      requestAnimationFrame(frame);
+    }
+
+    window.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>

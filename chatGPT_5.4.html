@@ -1,0 +1,1859 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>2.5D Renderer and Live Level Editor</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090b0f;
+      --panel: #111723;
+      --panel-2: #172032;
+      --text: #edf3ff;
+      --muted: #9ba9bd;
+      --accent: #7ef0a3;
+      --danger: #ff6969;
+      --warn: #ffd36b;
+      --line: rgba(255,255,255,.14);
+      --shadow: rgba(0,0,0,.5);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    button, select, textarea, input {
+      font: inherit;
+    }
+
+    #app {
+      display: flex;
+      flex-direction: row;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      background: #000;
+    }
+
+    #viewPanel, #mapPanel {
+      position: relative;
+      flex: 1;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      background: #05060a;
+    }
+
+    #viewPanel { border-right: 1px solid rgba(255,255,255,.12); }
+    #mapPanel { background: #0d111a; }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      touch-action: none;
+      image-rendering: pixelated;
+    }
+
+    #hud {
+      position: absolute;
+      left: 12px;
+      top: 10px;
+      z-index: 3;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      max-width: calc(100% - 24px);
+      pointer-events: none;
+      text-shadow: 0 2px 8px #000;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .pill {
+      padding: 5px 8px;
+      border-radius: 999px;
+      background: rgba(0,0,0,.45);
+      border: 1px solid rgba(255,255,255,.12);
+      backdrop-filter: blur(8px);
+    }
+
+    #crosshair {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 28px;
+      height: 28px;
+      margin-left: -14px;
+      margin-top: -14px;
+      z-index: 2;
+      pointer-events: none;
+      opacity: .7;
+    }
+    #crosshair::before, #crosshair::after {
+      content: "";
+      position: absolute;
+      background: rgba(255,255,255,.78);
+      box-shadow: 0 0 6px rgba(0,0,0,.9);
+      border-radius: 2px;
+    }
+    #crosshair::before { left: 13px; top: 4px; width: 2px; height: 20px; }
+    #crosshair::after { top: 13px; left: 4px; height: 2px; width: 20px; }
+    #crosshair.flash::before, #crosshair.flash::after { background: #ffe072; }
+
+    #damageFlash, #messageToast {
+      position: absolute;
+      inset: 0;
+      z-index: 4;
+      pointer-events: none;
+    }
+    #damageFlash {
+      background: radial-gradient(circle at center, rgba(255,255,255,0) 0 25%, rgba(255,210,75,.25), rgba(255,83,83,.12));
+      opacity: 0;
+      transition: opacity .12s linear;
+    }
+    #damageFlash.show { opacity: 1; }
+
+    #messageToast {
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 0 18px 18px;
+      color: #fff;
+      text-shadow: 0 2px 8px #000;
+      font-size: 13px;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    #messageToast.show { opacity: 1; transform: translateY(0); }
+    #messageToast > span {
+      max-width: 720px;
+      padding: 8px 12px;
+      border-radius: 14px;
+      background: rgba(0,0,0,.65);
+      border: 1px solid rgba(255,255,255,.16);
+      backdrop-filter: blur(8px);
+    }
+
+    #mobileControls {
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+      pointer-events: none;
+    }
+    #joyBase, #joyKnob, #shootButton {
+      position: absolute;
+      pointer-events: auto;
+      display: none;
+    }
+    #joyBase {
+      left: 24px;
+      bottom: 24px;
+      width: 112px;
+      height: 112px;
+      border-radius: 50%;
+      background: rgba(255,255,255,.09);
+      border: 2px solid rgba(255,255,255,.24);
+      box-shadow: 0 8px 26px rgba(0,0,0,.4) inset, 0 4px 20px rgba(0,0,0,.25);
+    }
+    #joyKnob {
+      left: 58px;
+      bottom: 58px;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: rgba(126,240,163,.55);
+      border: 2px solid rgba(255,255,255,.6);
+      transform: translate(0,0);
+    }
+    #shootButton {
+      right: 22px;
+      bottom: 26px;
+      min-width: 86px;
+      min-height: 64px;
+      border: 1px solid rgba(255,255,255,.28);
+      border-radius: 22px;
+      background: rgba(255,255,255,.12);
+      color: #fff;
+      font-weight: 800;
+      letter-spacing: .04em;
+      box-shadow: 0 8px 26px rgba(0,0,0,.35);
+    }
+
+    #toolbar {
+      position: absolute;
+      left: 10px;
+      right: 10px;
+      bottom: 10px;
+      z-index: 3;
+      display: flex;
+      gap: 8px;
+      align-items: stretch;
+      flex-wrap: wrap;
+      padding: 10px;
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 18px;
+      background: rgba(10,15,25,.82);
+      box-shadow: 0 10px 40px rgba(0,0,0,.35);
+      backdrop-filter: blur(10px);
+      max-height: 45%;
+      overflow: auto;
+      scrollbar-width: thin;
+    }
+
+    .group {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding-right: 8px;
+      border-right: 1px solid rgba(255,255,255,.11);
+    }
+    .group:last-child { border-right: 0; }
+    .groupLabel {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1;
+      padding: 0 2px;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+    }
+
+    .toolButton, .smallButton, .swatchButton {
+      min-height: 44px;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 13px;
+      color: var(--text);
+      background: rgba(255,255,255,.08);
+      cursor: pointer;
+      box-shadow: 0 2px 0 rgba(255,255,255,.04) inset;
+    }
+    .toolButton { min-width: 72px; padding: 0 11px; font-weight: 750; }
+    .smallButton { min-width: 52px; padding: 0 10px; }
+    .swatchButton {
+      min-width: 44px;
+      width: 44px;
+      padding: 0;
+      overflow: hidden;
+      position: relative;
+    }
+    .swatchButton canvas { width: 100%; height: 100%; image-rendering: pixelated; }
+    .toolButton:hover, .smallButton:hover, .swatchButton:hover { background: rgba(255,255,255,.13); }
+    .active {
+      outline: 2px solid var(--accent);
+      background: rgba(126,240,163,.18);
+      border-color: rgba(126,240,163,.78);
+    }
+
+    #modalBackdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      background: rgba(0,0,0,.7);
+    }
+    #modalBackdrop.show { display: flex; }
+    #modal {
+      width: min(900px, 100%);
+      max-height: min(760px, 92vh);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 16px;
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,.16);
+      background: #111827;
+      box-shadow: 0 18px 80px rgba(0,0,0,.6);
+    }
+    #modal h2 { margin: 0; font-size: 18px; }
+    #levelText {
+      width: 100%;
+      min-height: 320px;
+      flex: 1;
+      resize: vertical;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,.16);
+      color: #e8f1ff;
+      background: #080c14;
+      user-select: text;
+      -webkit-user-select: text;
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    #modalActions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    #modalActions button {
+      min-height: 44px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,.15);
+      background: rgba(255,255,255,.08);
+      color: #fff;
+      padding: 0 12px;
+      cursor: pointer;
+    }
+    #modalStatus { min-height: 20px; color: var(--muted); font-size: 13px; }
+
+    @media (max-width: 768px), (pointer: coarse) {
+      #app { flex-direction: column; }
+      #viewPanel { border-right: 0; border-bottom: 1px solid rgba(255,255,255,.12); }
+      #joyBase, #joyKnob, #shootButton { display: block; }
+      #toolbar {
+        left: 8px;
+        right: 8px;
+        bottom: 8px;
+        gap: 6px;
+        padding: 8px;
+        max-height: 50%;
+      }
+      .toolButton { min-width: 62px; padding: 0 8px; }
+      .group { gap: 5px; padding-right: 6px; }
+      #hud { font-size: 11px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <section id="viewPanel" aria-label="First-person renderer">
+      <canvas id="viewCanvas"></canvas>
+      <div id="hud"><span class="pill" id="fpsText">FPS --</span><span class="pill" id="hintText">WASD / arrows, Space to shoot, 1-3 tools</span></div>
+      <div id="crosshair" aria-hidden="true"></div>
+      <div id="damageFlash" aria-hidden="true"></div>
+      <div id="messageToast"><span></span></div>
+      <div id="mobileControls" aria-hidden="true">
+        <div id="joyBase"></div>
+        <div id="joyKnob"></div>
+        <button id="shootButton" type="button">FIRE</button>
+      </div>
+    </section>
+    <section id="mapPanel" aria-label="Editable top-down map">
+      <canvas id="mapCanvas"></canvas>
+      <div id="toolbar" role="toolbar" aria-label="Level editor tools"></div>
+    </section>
+  </div>
+
+  <div id="modalBackdrop" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div id="modal">
+      <h2 id="modalTitle">Level JSON</h2>
+      <textarea id="levelText" spellcheck="false"></textarea>
+      <div id="modalStatus"></div>
+      <div id="modalActions">
+        <button id="copyJsonButton" type="button">Copy</button>
+        <button id="downloadJsonButton" type="button">Download JSON</button>
+        <button id="loadJsonButton" type="button">Load From Text</button>
+        <button id="closeModalButton" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  'use strict';
+
+  // ---------------------------------------------------------------------------
+  // 1. Constants and state
+  // ---------------------------------------------------------------------------
+
+  const INTERNAL_VIEW_WIDTH = 480;
+  const INTERNAL_VIEW_HEIGHT = 270;
+  const TEXTURE_SIZE = 64;
+  const PLAYER_RADIUS = 0.25;
+  const WEAPON_DAMAGE = 50;
+  const SHOOT_CONE_RADIANS = 0.055;
+  const EDITOR_TOOLS = Object.freeze({ WALL: 'wall', DINOSAUR: 'dinosaur', ERASE: 'erase' });
+  const STORAGE_KEY = 'single_file_25d_editor_level_v1';
+  const TAU = Math.PI * 2;
+
+  const appState = {
+    level: null,
+    player: null,
+    editor: {
+      selectedTool: EDITOR_TOOLS.WALL,
+      selectedWallTexture: 'wall_brick_01',
+      selectedFloorTexture: 'floor_stone_01',
+      selectedCeilingTexture: 'ceiling_metal_01',
+      selectedDinosaurSprite: 'dino_raptor_01',
+      hoveredCellX: null,
+      hoveredCellY: null,
+      mapZoom: 1,
+      mapOffsetX: 0,
+      mapOffsetY: 0,
+      rejectTimer: 0,
+      rejectCellX: null,
+      rejectCellY: null
+    },
+    input: {
+      keys: Object.create(null),
+      mobileMoveX: 0,
+      mobileMoveY: 0,
+      viewPointers: Object.create(null),
+      mapPointers: new Map(),
+      lastPinchDistance: 0,
+      lastPinchCenter: null,
+      editingPointerId: null,
+      editingStartX: 0,
+      editingStartY: 0,
+      editingMoved: false
+    },
+    assets: {
+      textures: Object.create(null),
+      sprites: Object.create(null),
+      textureData: Object.create(null)
+    },
+    fx: {
+      shootFlash: 0,
+      hitTextTimer: 0,
+      lastMessage: '',
+      fps: 0,
+      fpsFrames: 0,
+      fpsAccum: 0
+    }
+  };
+
+  const viewCanvas = document.getElementById('viewCanvas');
+  const viewCtx = viewCanvas.getContext('2d', { alpha: false });
+  const mapCanvas = document.getElementById('mapCanvas');
+  const mapCtx = mapCanvas.getContext('2d', { alpha: false });
+  const toolbar = document.getElementById('toolbar');
+  const fpsText = document.getElementById('fpsText');
+  const hintText = document.getElementById('hintText');
+  const crosshair = document.getElementById('crosshair');
+  const damageFlash = document.getElementById('damageFlash');
+  const messageToast = document.getElementById('messageToast');
+  const messageToastText = messageToast.querySelector('span');
+  const joyBase = document.getElementById('joyBase');
+  const joyKnob = document.getElementById('joyKnob');
+  const shootButton = document.getElementById('shootButton');
+  const modalBackdrop = document.getElementById('modalBackdrop');
+  const levelText = document.getElementById('levelText');
+  const modalStatus = document.getElementById('modalStatus');
+
+  const viewBuffer = document.createElement('canvas');
+  viewBuffer.width = INTERNAL_VIEW_WIDTH;
+  viewBuffer.height = INTERNAL_VIEW_HEIGHT;
+  const viewBufferCtx = viewBuffer.getContext('2d', { alpha: false });
+  viewBufferCtx.imageSmoothingEnabled = false;
+  const depthBuffer = new Float32Array(INTERNAL_VIEW_WIDTH);
+
+  if (!viewCtx || !mapCtx || !window.PointerEvent) {
+    document.body.innerHTML = '<div style="padding:24px;color:white;background:#111;font-family:sans-serif">This demo needs Canvas 2D and Pointer Events support.</div>';
+    throw new Error('Unsupported browser APIs');
+  }
+
+  // ---------------------------------------------------------------------------
+  // 2. Utility functions
+  // ---------------------------------------------------------------------------
+
+  function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function normalizeAngle(angle) {
+    angle = (angle + Math.PI) % TAU;
+    if (angle < 0) angle += TAU;
+    return angle - Math.PI;
+  }
+  function angleWrapPositive(angle) {
+    angle %= TAU;
+    return angle < 0 ? angle + TAU : angle;
+  }
+  function safeId(prefix) {
+    return prefix + '_' + Date.now().toString(36) + '_' + Math.floor(Math.random() * 1e6).toString(36);
+  }
+  function cellIndex(level, x, y) { return y * level.width + x; }
+  function inBounds(level, x, y) { return x >= 0 && y >= 0 && x < level.width && y < level.height; }
+  function getCell(level, x, y) {
+    if (!inBounds(level, x, y)) return null;
+    return level.cells[cellIndex(level, x, y)];
+  }
+  function isBoundary(level, x, y) { return x === 0 || y === 0 || x === level.width - 1 || y === level.height - 1; }
+  function makeEmptyCell(floorTexture, ceilingTexture) {
+    return { type: 'empty', wallTexture: null, floorTexture: floorTexture, ceilingTexture: ceilingTexture, blocking: false };
+  }
+  function makeWallCell(wallTexture, floorTexture, ceilingTexture) {
+    return { type: 'wall', wallTexture: wallTexture, floorTexture: floorTexture, ceilingTexture: ceilingTexture, blocking: true };
+  }
+  function isWall(level, x, y) {
+    const cell = getCell(level, x, y);
+    return !cell || cell.type === 'wall' || cell.blocking === true;
+  }
+  function pointCell(x, y) { return { x: Math.floor(x), y: Math.floor(y) }; }
+  function entityCell(entity) { return { x: Math.floor(entity.x), y: Math.floor(entity.y) }; }
+  function entityInCell(level, x, y) {
+    for (const entity of level.entities) {
+      if (entity.type === 'dinosaur' && Math.floor(entity.x) === x && Math.floor(entity.y) === y) return entity;
+    }
+    return null;
+  }
+  function updateToast(message) {
+    appState.fx.lastMessage = message;
+    appState.fx.hitTextTimer = 2.0;
+    messageToastText.textContent = message;
+    messageToast.classList.add('show');
+  }
+  function flashRejected(x, y, message) {
+    appState.editor.rejectTimer = 0.45;
+    appState.editor.rejectCellX = x;
+    appState.editor.rejectCellY = y;
+    updateToast(message || 'Edit rejected');
+  }
+  function setTool(tool) {
+    appState.editor.selectedTool = tool;
+    refreshToolbarActiveState();
+  }
+  function localStorageSafeSet(key, value) {
+    try { localStorage.setItem(key, value); } catch (error) { /* ignored */ }
+  }
+  function localStorageSafeGet(key) {
+    try { return localStorage.getItem(key); } catch (error) { return null; }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 3. Procedural texture and sprite generation
+  // ---------------------------------------------------------------------------
+
+  function createTextureCanvas(size) {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    return canvas;
+  }
+
+  function seededNoise(x, y, seed) {
+    let n = x * 374761393 + y * 668265263 + seed * 2147483647;
+    n = (n ^ (n >> 13)) * 1274126177;
+    return ((n ^ (n >> 16)) >>> 0) / 4294967295;
+  }
+
+  function createBrickTexture(size) {
+    const canvas = createTextureCanvas(size);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#7b3328';
+    ctx.fillRect(0, 0, size, size);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const n = seededNoise(x, y, 4);
+        if (n > .68) {
+          ctx.fillStyle = 'rgba(255,190,150,.12)';
+          ctx.fillRect(x, y, 1, 1);
+        } else if (n < .18) {
+          ctx.fillStyle = 'rgba(0,0,0,.14)';
+          ctx.fillRect(x, y, 1, 1);
+        }
+      }
+    }
+    ctx.strokeStyle = '#2a100d';
+    ctx.lineWidth = 2;
+    for (let y = 0; y <= size; y += 16) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(size, y); ctx.stroke();
+      const offset = ((y / 16) % 2) * 16;
+      for (let x = -offset; x <= size; x += 32) {
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 16); ctx.stroke();
+      }
+    }
+    return canvas;
+  }
+
+  function createMetalTexture(size) {
+    const canvas = createTextureCanvas(size);
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, size, size);
+    grad.addColorStop(0, '#293441'); grad.addColorStop(.5, '#69798d'); grad.addColorStop(1, '#202833');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    ctx.strokeStyle = 'rgba(0,0,0,.42)';
+    ctx.lineWidth = 2;
+    for (let x = 0; x <= size; x += 16) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, size); ctx.stroke(); }
+    for (let y = 0; y <= size; y += 16) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(size, y); ctx.stroke(); }
+    ctx.fillStyle = 'rgba(255,255,255,.25)';
+    for (let y = 8; y < size; y += 16) for (let x = 8; x < size; x += 16) {
+      ctx.beginPath(); ctx.arc(x, y, 2, 0, TAU); ctx.fill();
+    }
+    return canvas;
+  }
+
+  function createStoneTexture(size) {
+    const canvas = createTextureCanvas(size);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#4b4b48';
+    ctx.fillRect(0, 0, size, size);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const n = seededNoise(Math.floor(x / 2), Math.floor(y / 2), 10);
+        const shade = Math.floor(62 + n * 60);
+        ctx.fillStyle = 'rgb(' + shade + ',' + shade + ',' + (shade - 3) + ')';
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+    ctx.strokeStyle = 'rgba(20,20,20,.55)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, 20); ctx.lineTo(size, 16); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, 42); ctx.lineTo(size, 46); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(24, 0); ctx.lineTo(18, size); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(48, 0); ctx.lineTo(54, size); ctx.stroke();
+    return canvas;
+  }
+
+  function createHazardTexture(size) {
+    const canvas = createTextureCanvas(size);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#1b1b16';
+    ctx.fillRect(0, 0, size, size);
+    for (let x = -size; x < size * 2; x += 18) {
+      ctx.fillStyle = '#d2a522';
+      ctx.beginPath();
+      ctx.moveTo(x, 0); ctx.lineTo(x + 9, 0); ctx.lineTo(x + size + 9, size); ctx.lineTo(x + size, size); ctx.closePath();
+      ctx.fill();
+    }
+    ctx.strokeStyle = 'rgba(0,0,0,.55)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(1.5, 1.5, size - 3, size - 3);
+    return canvas;
+  }
+
+  function createFloorStoneTexture(size) {
+    const canvas = createTextureCanvas(size);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#343735';
+    ctx.fillRect(0, 0, size, size);
+    ctx.strokeStyle = '#1d201f';
+    ctx.lineWidth = 2;
+    for (let x = 0; x <= size; x += 16) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, size); ctx.stroke(); }
+    for (let y = 0; y <= size; y += 16) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(size, y); ctx.stroke(); }
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      const n = seededNoise(x, y, 21);
+      if (n > .82) { ctx.fillStyle = 'rgba(255,255,255,.08)'; ctx.fillRect(x, y, 1, 1); }
+      if (n < .08) { ctx.fillStyle = 'rgba(0,0,0,.10)'; ctx.fillRect(x, y, 1, 1); }
+    }
+    return canvas;
+  }
+
+  function createMudTexture(size) {
+    const canvas = createTextureCanvas(size);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#4a3021';
+    ctx.fillRect(0, 0, size, size);
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      const n = seededNoise(x, y, 31);
+      ctx.fillStyle = n > .55 ? 'rgba(90,58,36,.35)' : 'rgba(25,15,10,.16)';
+      ctx.fillRect(x, y, 1, 1);
+    }
+    ctx.strokeStyle = 'rgba(0,0,0,.15)';
+    for (let i = 0; i < 12; i++) {
+      const x = seededNoise(i, 3, 31) * size;
+      const y = seededNoise(i, 8, 31) * size;
+      ctx.beginPath(); ctx.ellipse(x, y, 6, 2, seededNoise(i, 4, 31) * TAU, 0, TAU); ctx.stroke();
+    }
+    return canvas;
+  }
+
+  function createCeilingMetalTexture(size) {
+    const canvas = createTextureCanvas(size);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#252b34';
+    ctx.fillRect(0, 0, size, size);
+    for (let y = 0; y < size; y += 8) {
+      ctx.fillStyle = y % 16 === 0 ? '#313a46' : '#1d232b';
+      ctx.fillRect(0, y, size, 8);
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,.08)';
+    for (let x = 0; x <= size; x += 16) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, size); ctx.stroke(); }
+    return canvas;
+  }
+
+  function createCheckerTexture(size) {
+    const canvas = createTextureCanvas(size);
+    const ctx = canvas.getContext('2d');
+    for (let y = 0; y < size; y += 8) for (let x = 0; x < size; x += 8) {
+      ctx.fillStyle = ((x + y) / 8) % 2 === 0 ? '#f0f' : '#111';
+      ctx.fillRect(x, y, 8, 8);
+    }
+    return canvas;
+  }
+
+  function createRaptorSprite(size, dead) {
+    const canvas = createTextureCanvas(size);
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, size, size);
+    ctx.imageSmoothingEnabled = false;
+    if (dead) {
+      ctx.fillStyle = 'rgba(0,0,0,.35)';
+      ctx.beginPath(); ctx.ellipse(size * .5, size * .80, size * .35, size * .12, 0, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#42642d';
+      ctx.fillRect(size * .24, size * .68, size * .52, size * .12);
+      ctx.fillStyle = '#89b84f';
+      ctx.fillRect(size * .18, size * .64, size * .20, size * .10);
+      ctx.fillStyle = '#222'; ctx.fillRect(size * .26, size * .66, 4, 3);
+      return canvas;
+    }
+    ctx.fillStyle = 'rgba(0,0,0,.35)';
+    ctx.beginPath(); ctx.ellipse(size * .5, size * .86, size * .25, size * .08, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#366b2c';
+    ctx.fillRect(size * .36, size * .34, size * .24, size * .38);
+    ctx.fillStyle = '#4f8d35';
+    ctx.fillRect(size * .29, size * .18, size * .33, size * .22);
+    ctx.fillStyle = '#76b44d';
+    ctx.fillRect(size * .43, size * .25, size * .16, size * .38);
+    ctx.fillStyle = '#1b2815';
+    ctx.fillRect(size * .52, size * .25, 5, 5);
+    ctx.fillStyle = '#dfead0';
+    ctx.fillRect(size * .27, size * .36, 7, 4);
+    ctx.fillRect(size * .30, size * .42, 7, 4);
+    ctx.fillStyle = '#2c5c24';
+    ctx.fillRect(size * .32, size * .66, size * .09, size * .22);
+    ctx.fillRect(size * .56, size * .66, size * .09, size * .22);
+    ctx.fillStyle = '#9bd966';
+    ctx.fillRect(size * .40, size * .28, 4, 6);
+    ctx.fillRect(size * .38, size * .38, 4, 6);
+    return canvas;
+  }
+
+  function createTrexSprite(size, dead) {
+    const canvas = createTextureCanvas(size);
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, size, size);
+    ctx.imageSmoothingEnabled = false;
+    if (dead) {
+      ctx.fillStyle = 'rgba(0,0,0,.35)';
+      ctx.beginPath(); ctx.ellipse(size * .5, size * .80, size * .38, size * .12, 0, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#7a5230'; ctx.fillRect(size * .20, size * .65, size * .58, size * .14);
+      ctx.fillStyle = '#b67a42'; ctx.fillRect(size * .54, size * .59, size * .22, size * .10);
+      return canvas;
+    }
+    ctx.fillStyle = 'rgba(0,0,0,.35)';
+    ctx.beginPath(); ctx.ellipse(size * .5, size * .86, size * .30, size * .08, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#7d4d2c'; ctx.fillRect(size * .34, size * .29, size * .30, size * .44);
+    ctx.fillStyle = '#b36a34'; ctx.fillRect(size * .42, size * .15, size * .34, size * .24);
+    ctx.fillStyle = '#df9a53'; ctx.fillRect(size * .60, size * .25, size * .20, size * .10);
+    ctx.fillStyle = '#1d1108'; ctx.fillRect(size * .61, size * .22, 5, 5);
+    ctx.fillStyle = '#f2ead9'; ctx.fillRect(size * .64, size * .34, 7, 4);
+    ctx.fillRect(size * .71, size * .34, 7, 4);
+    ctx.fillStyle = '#5c341e'; ctx.fillRect(size * .36, size * .69, size * .10, size * .21);
+    ctx.fillRect(size * .57, size * .69, size * .10, size * .21);
+    ctx.fillStyle = '#d99b5c'; ctx.fillRect(size * .38, size * .35, size * .05, size * .18);
+    ctx.fillRect(size * .62, size * .39, size * .05, size * .15);
+    return canvas;
+  }
+
+  const textureDefinitions = {
+    wall_brick_01: createBrickTexture,
+    wall_metal_01: createMetalTexture,
+    wall_stone_01: createStoneTexture,
+    wall_hazard_01: createHazardTexture,
+    floor_stone_01: createFloorStoneTexture,
+    floor_mud_01: createMudTexture,
+    ceiling_metal_01: createCeilingMetalTexture,
+    missing_checker: createCheckerTexture
+  };
+
+  const spriteDefinitions = {
+    dino_raptor_01: function(size) { return createRaptorSprite(size, false); },
+    dino_trex_01: function(size) { return createTrexSprite(size, false); },
+    dino_raptor_dead: function(size) { return createRaptorSprite(size, true); },
+    dino_trex_dead: function(size) { return createTrexSprite(size, true); },
+    missing_sprite: function(size) {
+      const canvas = createTextureCanvas(size);
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, size, size);
+      ctx.fillStyle = '#f0f'; ctx.fillRect(size * .25, size * .2, size * .5, size * .6);
+      ctx.fillStyle = '#fff'; ctx.fillText('?', size * .45, size * .55);
+      return canvas;
+    }
+  };
+
+  function generateAssets() {
+    for (const id in textureDefinitions) {
+      const texture = textureDefinitions[id](TEXTURE_SIZE);
+      appState.assets.textures[id] = texture;
+      appState.assets.textureData[id] = texture.getContext('2d').getImageData(0, 0, texture.width, texture.height).data;
+    }
+    for (const id in spriteDefinitions) {
+      appState.assets.sprites[id] = spriteDefinitions[id](96);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 4. Level creation and validation
+  // ---------------------------------------------------------------------------
+
+  function createDefaultLevel() {
+    const width = 16;
+    const height = 16;
+    const level = {
+      version: 1,
+      width: width,
+      height: height,
+      defaultFloorTexture: 'floor_stone_01',
+      defaultCeilingTexture: 'ceiling_metal_01',
+      playerStart: { x: 2.5, y: 2.5, angle: 0 },
+      cells: [],
+      entities: []
+    };
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const border = x === 0 || y === 0 || x === width - 1 || y === height - 1;
+        level.cells.push(border ? makeWallCell('wall_stone_01', 'floor_stone_01', 'ceiling_metal_01') : makeEmptyCell('floor_stone_01', 'ceiling_metal_01'));
+      }
+    }
+    function wall(x, y, texture) { level.cells[cellIndex(level, x, y)] = makeWallCell(texture, 'floor_stone_01', 'ceiling_metal_01'); }
+    for (let x = 3; x < 9; x++) wall(x, 5, x % 2 ? 'wall_brick_01' : 'wall_metal_01');
+    for (let y = 7; y < 13; y++) wall(10, y, 'wall_hazard_01');
+    for (let x = 4; x < 13; x++) if (x !== 7 && x !== 8) wall(x, 11, 'wall_stone_01');
+    wall(6, 8, 'wall_brick_01'); wall(7, 8, 'wall_brick_01'); wall(12, 4, 'wall_metal_01'); wall(12, 5, 'wall_metal_01');
+    level.entities.push({ id: 'dino_001', type: 'dinosaur', x: 6.5, y: 3.5, radius: 0.3, sprite: 'dino_raptor_01', health: 100, state: 'idle', blocking: true });
+    level.entities.push({ id: 'dino_002', type: 'dinosaur', x: 13.5, y: 9.5, radius: 0.35, sprite: 'dino_trex_01', health: 100, state: 'idle', blocking: true });
+    return level;
+  }
+
+  function cloneLevelForExport(level) {
+    return {
+      version: 1,
+      width: level.width,
+      height: level.height,
+      defaultFloorTexture: level.defaultFloorTexture,
+      defaultCeilingTexture: level.defaultCeilingTexture,
+      playerStart: {
+        x: Number(appState.player.x.toFixed(3)),
+        y: Number(appState.player.y.toFixed(3)),
+        angle: Number(angleWrapPositive(appState.player.angle).toFixed(5))
+      },
+      cells: level.cells.map(function(cell) {
+        return {
+          type: cell.type,
+          wallTexture: cell.wallTexture,
+          floorTexture: cell.floorTexture,
+          ceilingTexture: cell.ceilingTexture,
+          blocking: !!cell.blocking
+        };
+      }),
+      entities: level.entities.map(function(entity) {
+        return {
+          id: entity.id,
+          type: entity.type,
+          x: Number(entity.x.toFixed(3)),
+          y: Number(entity.y.toFixed(3)),
+          radius: entity.radius,
+          sprite: entity.sprite,
+          health: entity.health,
+          state: entity.state,
+          blocking: !!entity.blocking
+        };
+      })
+    };
+  }
+
+  function createPlayerFromStart(start) {
+    return {
+      x: start.x,
+      y: start.y,
+      angle: start.angle || 0,
+      radius: PLAYER_RADIUS,
+      fov: Math.PI / 3,
+      renderDistance: 12,
+      moveSpeed: 3.0,
+      turnSpeed: 2.4
+    };
+  }
+
+  function validateAndNormalizeLevel(raw) {
+    if (!raw || typeof raw !== 'object') throw new Error('Level must be a JSON object.');
+    const width = raw.width;
+    const height = raw.height;
+    if (!Number.isInteger(width) || !Number.isInteger(height) || width < 3 || height < 3 || width > 128 || height > 128) {
+      throw new Error('Width and height must be integers between 3 and 128.');
+    }
+    if (!Array.isArray(raw.cells) || raw.cells.length !== width * height) {
+      throw new Error('Cell array length must match width × height.');
+    }
+    const floorId = raw.defaultFloorTexture || 'floor_stone_01';
+    const ceilingId = raw.defaultCeilingTexture || 'ceiling_metal_01';
+    if (!appState.assets.textures[floorId]) throw new Error('Unknown default floor texture: ' + floorId);
+    if (!appState.assets.textures[ceilingId]) throw new Error('Unknown default ceiling texture: ' + ceilingId);
+
+    const level = {
+      version: 1,
+      width: width,
+      height: height,
+      defaultFloorTexture: floorId,
+      defaultCeilingTexture: ceilingId,
+      playerStart: { x: 1.5, y: 1.5, angle: 0 },
+      cells: [],
+      entities: []
+    };
+
+    for (let i = 0; i < raw.cells.length; i++) {
+      const c = raw.cells[i] || {};
+      const type = c.type === 'wall' ? 'wall' : 'empty';
+      const wallTexture = type === 'wall' ? (appState.assets.textures[c.wallTexture] ? c.wallTexture : 'missing_checker') : null;
+      const cellFloor = appState.assets.textures[c.floorTexture] ? c.floorTexture : floorId;
+      const cellCeiling = appState.assets.textures[c.ceilingTexture] ? c.ceilingTexture : ceilingId;
+      level.cells.push(type === 'wall' ? makeWallCell(wallTexture, cellFloor, cellCeiling) : makeEmptyCell(cellFloor, cellCeiling));
+    }
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (isBoundary(level, x, y)) {
+          level.cells[cellIndex(level, x, y)] = makeWallCell('wall_stone_01', floorId, ceilingId);
+        }
+      }
+    }
+
+    const start = raw.playerStart || {};
+    if (typeof start.x !== 'number' || typeof start.y !== 'number') throw new Error('Player start needs numeric x and y.');
+    if (start.x < 0 || start.y < 0 || start.x >= width || start.y >= height) throw new Error('Player start is outside the map.');
+    if (isWall(level, Math.floor(start.x), Math.floor(start.y))) throw new Error('Player start cannot be inside a wall.');
+    level.playerStart = { x: start.x, y: start.y, angle: typeof start.angle === 'number' ? start.angle : 0 };
+
+    const occupied = new Set();
+    if (Array.isArray(raw.entities)) {
+      for (const rawEntity of raw.entities) {
+        if (!rawEntity || rawEntity.type !== 'dinosaur') continue;
+        const x = Number(rawEntity.x);
+        const y = Number(rawEntity.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x >= width || y >= height) {
+          throw new Error('A dinosaur is outside the map.');
+        }
+        const cx = Math.floor(x);
+        const cy = Math.floor(y);
+        if (isWall(level, cx, cy)) throw new Error('A dinosaur cannot be inside a wall.');
+        const key = cx + ',' + cy;
+        if (occupied.has(key)) throw new Error('Multiple dinosaurs cannot occupy the same cell.');
+        occupied.add(key);
+        const sprite = appState.assets.sprites[rawEntity.sprite] ? rawEntity.sprite : 'missing_sprite';
+        const health = Number.isFinite(rawEntity.health) ? rawEntity.health : 100;
+        const state = rawEntity.state === 'dead' ? 'dead' : (rawEntity.state === 'alert' ? 'alert' : 'idle');
+        level.entities.push({
+          id: rawEntity.id || safeId('dino'),
+          type: 'dinosaur',
+          x: x,
+          y: y,
+          radius: Number.isFinite(rawEntity.radius) ? clamp(rawEntity.radius, 0.1, 0.45) : 0.3,
+          sprite: sprite,
+          health: health,
+          state: state,
+          blocking: state !== 'dead' && rawEntity.blocking !== false
+        });
+      }
+    }
+    return level;
+  }
+
+  function loadLevel(level) {
+    appState.level = validateAndNormalizeLevel(level);
+    appState.player = createPlayerFromStart(appState.level.playerStart);
+    appState.editor.hoveredCellX = null;
+    appState.editor.hoveredCellY = null;
+    appState.editor.mapOffsetX = 0;
+    appState.editor.mapOffsetY = 0;
+    appState.editor.mapZoom = 1;
+    saveCurrentLevelToStorage();
+  }
+
+  function saveCurrentLevelToStorage() {
+    if (!appState.level || !appState.player) return;
+    localStorageSafeSet(STORAGE_KEY, JSON.stringify(cloneLevelForExport(appState.level)));
+  }
+
+  function tryLoadFromStorage() {
+    const saved = localStorageSafeGet(STORAGE_KEY);
+    if (!saved) return false;
+    try {
+      appState.level = validateAndNormalizeLevel(JSON.parse(saved));
+      appState.player = createPlayerFromStart(appState.level.playerStart);
+      return true;
+    } catch (error) {
+      console.warn('Saved level ignored:', error);
+      return false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 5. Input handling
+  // ---------------------------------------------------------------------------
+
+  function cycleWallTexture(direction) {
+    const ids = Object.keys(textureDefinitions).filter(function(id) { return id.indexOf('wall_') === 0; });
+    const current = ids.indexOf(appState.editor.selectedWallTexture);
+    appState.editor.selectedWallTexture = ids[(current + direction + ids.length) % ids.length];
+    refreshToolbarActiveState();
+    updateToast('Wall texture: ' + appState.editor.selectedWallTexture);
+  }
+
+  window.addEventListener('keydown', function(event) {
+    appState.input.keys[event.code] = true;
+    if (event.code === 'Space') { event.preventDefault(); shoot(); }
+    if (event.code === 'Digit1') setTool(EDITOR_TOOLS.WALL);
+    if (event.code === 'Digit2') setTool(EDITOR_TOOLS.DINOSAUR);
+    if (event.code === 'Digit3') setTool(EDITOR_TOOLS.ERASE);
+    if (event.code === 'KeyQ') cycleWallTexture(-1);
+    if (event.code === 'KeyE') cycleWallTexture(1);
+    if ((event.ctrlKey || event.metaKey) && event.code === 'KeyS') { event.preventDefault(); openExportModal(); }
+    if ((event.ctrlKey || event.metaKey) && event.code === 'KeyO') { event.preventDefault(); openImportModal(); }
+  });
+
+  window.addEventListener('keyup', function(event) {
+    appState.input.keys[event.code] = false;
+  });
+
+  function updateInput(deltaSeconds) {
+    const keys = appState.input.keys;
+    const player = appState.player;
+    let turn = 0;
+    if (keys.ArrowLeft) turn -= 1;
+    if (keys.ArrowRight) turn += 1;
+    player.angle = angleWrapPositive(player.angle + turn * player.turnSpeed * deltaSeconds);
+
+    let forward = 0;
+    let strafe = 0;
+    if (keys.KeyW || keys.ArrowUp) forward += 1;
+    if (keys.KeyS || keys.ArrowDown) forward -= 1;
+    if (keys.KeyA) strafe -= 1;
+    if (keys.KeyD) strafe += 1;
+
+    forward += -appState.input.mobileMoveY;
+    strafe += appState.input.mobileMoveX;
+
+    const len = Math.hypot(forward, strafe);
+    if (len > 0) {
+      forward /= Math.max(1, len);
+      strafe /= Math.max(1, len);
+      const cos = Math.cos(player.angle);
+      const sin = Math.sin(player.angle);
+      const speed = player.moveSpeed * deltaSeconds;
+      const dx = (cos * forward - sin * strafe) * speed;
+      const dy = (sin * forward + cos * strafe) * speed;
+      movePlayer(dx, dy);
+    }
+  }
+
+  function updateJoystickVisual() {
+    const max = 34;
+    joyKnob.style.transform = 'translate(' + (appState.input.mobileMoveX * max) + 'px,' + (appState.input.mobileMoveY * max) + 'px)';
+  }
+
+  viewCanvas.addEventListener('pointerdown', function(event) {
+    viewCanvas.setPointerCapture(event.pointerId);
+    const rect = viewCanvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const leftSide = x < rect.width * 0.45;
+    const bottomZone = y > rect.height * 0.36;
+    const mode = leftSide && bottomZone ? 'move' : 'look';
+    appState.input.viewPointers[event.pointerId] = { mode: mode, startX: x, startY: y, lastX: x, lastY: y, moved: false, time: performance.now() };
+    if (mode === 'move') {
+      appState.input.mobileMoveX = 0;
+      appState.input.mobileMoveY = 0;
+      updateJoystickVisual();
+    }
+  });
+
+  viewCanvas.addEventListener('pointermove', function(event) {
+    const pointer = appState.input.viewPointers[event.pointerId];
+    if (!pointer) return;
+    const rect = viewCanvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const dx = x - pointer.lastX;
+    const dy = y - pointer.lastY;
+    if (Math.hypot(x - pointer.startX, y - pointer.startY) > 8) pointer.moved = true;
+    if (pointer.mode === 'move') {
+      appState.input.mobileMoveX = clamp((x - pointer.startX) / 48, -1, 1);
+      appState.input.mobileMoveY = clamp((y - pointer.startY) / 48, -1, 1);
+      updateJoystickVisual();
+    } else {
+      appState.player.angle = angleWrapPositive(appState.player.angle + dx * 0.006);
+    }
+    pointer.lastX = x;
+    pointer.lastY = y;
+  });
+
+  function endViewPointer(event) {
+    const pointer = appState.input.viewPointers[event.pointerId];
+    if (!pointer) return;
+    if (pointer.mode === 'move') {
+      appState.input.mobileMoveX = 0;
+      appState.input.mobileMoveY = 0;
+      updateJoystickVisual();
+    } else if (!pointer.moved && performance.now() - pointer.time < 450) {
+      shoot();
+    }
+    delete appState.input.viewPointers[event.pointerId];
+  }
+  viewCanvas.addEventListener('pointerup', endViewPointer);
+  viewCanvas.addEventListener('pointercancel', endViewPointer);
+  shootButton.addEventListener('pointerdown', function(event) { event.stopPropagation(); event.preventDefault(); shoot(); });
+
+  function screenToMapCell(clientX, clientY) {
+    const rect = mapCanvas.getBoundingClientRect();
+    const sx = clientX - rect.left;
+    const sy = clientY - rect.top;
+    const transform = getMapTransform();
+    const worldX = (sx - transform.offsetX) / transform.scale;
+    const worldY = (sy - transform.offsetY) / transform.scale;
+    return { x: Math.floor(worldX), y: Math.floor(worldY), worldX: worldX, worldY: worldY };
+  }
+
+  mapCanvas.addEventListener('pointerdown', function(event) {
+    mapCanvas.setPointerCapture(event.pointerId);
+    appState.input.mapPointers.set(event.pointerId, { x: event.clientX, y: event.clientY, lastX: event.clientX, lastY: event.clientY });
+    if (appState.input.mapPointers.size === 1) {
+      appState.input.editingPointerId = event.pointerId;
+      appState.input.editingStartX = event.clientX;
+      appState.input.editingStartY = event.clientY;
+      appState.input.editingMoved = false;
+    } else {
+      appState.input.editingPointerId = null;
+      appState.input.lastPinchDistance = getPinchDistance();
+      appState.input.lastPinchCenter = getPinchCenter();
+    }
+  });
+
+  mapCanvas.addEventListener('pointermove', function(event) {
+    const pointer = appState.input.mapPointers.get(event.pointerId);
+    if (!pointer) {
+      const cell = screenToMapCell(event.clientX, event.clientY);
+      appState.editor.hoveredCellX = cell.x;
+      appState.editor.hoveredCellY = cell.y;
+      return;
+    }
+    pointer.lastX = pointer.x; pointer.lastY = pointer.y; pointer.x = event.clientX; pointer.y = event.clientY;
+    const hover = screenToMapCell(event.clientX, event.clientY);
+    appState.editor.hoveredCellX = hover.x;
+    appState.editor.hoveredCellY = hover.y;
+
+    if (appState.input.mapPointers.size >= 2) {
+      const center = getPinchCenter();
+      const distance = getPinchDistance();
+      if (appState.input.lastPinchCenter) {
+        appState.editor.mapOffsetX += center.x - appState.input.lastPinchCenter.x;
+        appState.editor.mapOffsetY += center.y - appState.input.lastPinchCenter.y;
+      }
+      if (appState.input.lastPinchDistance > 0 && distance > 0) {
+        const zoomFactor = distance / appState.input.lastPinchDistance;
+        appState.editor.mapZoom = clamp(appState.editor.mapZoom * zoomFactor, 0.55, 5);
+      }
+      appState.input.lastPinchDistance = distance;
+      appState.input.lastPinchCenter = center;
+      return;
+    }
+
+    if (event.pointerId === appState.input.editingPointerId) {
+      const moved = Math.hypot(event.clientX - appState.input.editingStartX, event.clientY - appState.input.editingStartY);
+      if (moved > 7) appState.input.editingMoved = true;
+    }
+  });
+
+  function endMapPointer(event) {
+    const wasEditing = event.pointerId === appState.input.editingPointerId;
+    const moved = appState.input.editingMoved;
+    appState.input.mapPointers.delete(event.pointerId);
+    if (wasEditing && !moved && appState.input.mapPointers.size === 0) {
+      const cell = screenToMapCell(event.clientX, event.clientY);
+      editCell(cell.x, cell.y);
+    }
+    if (appState.input.mapPointers.size < 2) {
+      appState.input.lastPinchDistance = 0;
+      appState.input.lastPinchCenter = null;
+    }
+    if (appState.input.mapPointers.size === 0) appState.input.editingPointerId = null;
+  }
+  mapCanvas.addEventListener('pointerup', endMapPointer);
+  mapCanvas.addEventListener('pointercancel', endMapPointer);
+
+  function getPinchDistance() {
+    const values = Array.from(appState.input.mapPointers.values());
+    if (values.length < 2) return 0;
+    return Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y);
+  }
+  function getPinchCenter() {
+    const values = Array.from(appState.input.mapPointers.values());
+    if (values.length < 2) return null;
+    return { x: (values[0].x + values[1].x) / 2, y: (values[0].y + values[1].y) / 2 };
+  }
+
+  // ---------------------------------------------------------------------------
+  // 6. Collision and movement
+  // ---------------------------------------------------------------------------
+
+  function collides(x, y, radius) {
+    const level = appState.level;
+    const minX = Math.floor(x - radius);
+    const maxX = Math.floor(x + radius);
+    const minY = Math.floor(y - radius);
+    const maxY = Math.floor(y + radius);
+    for (let cy = minY; cy <= maxY; cy++) {
+      for (let cx = minX; cx <= maxX; cx++) {
+        if (!inBounds(level, cx, cy) || isWall(level, cx, cy)) {
+          const closestX = clamp(x, cx, cx + 1);
+          const closestY = clamp(y, cy, cy + 1);
+          if (Math.hypot(x - closestX, y - closestY) < radius) return true;
+        }
+      }
+    }
+    for (const entity of level.entities) {
+      if (entity.type !== 'dinosaur' || entity.state === 'dead' || !entity.blocking) continue;
+      if (Math.hypot(x - entity.x, y - entity.y) < radius + entity.radius) return true;
+    }
+    return false;
+  }
+
+  function movePlayer(dx, dy) {
+    const player = appState.player;
+    const nextX = player.x + dx;
+    const nextY = player.y + dy;
+    if (!collides(nextX, player.y, player.radius)) player.x = nextX;
+    if (!collides(player.x, nextY, player.radius)) player.y = nextY;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 7. Raycasting
+  // ---------------------------------------------------------------------------
+
+  function castWallRay(originX, originY, angle, maxDistance) {
+    const level = appState.level;
+    const rayDirX = Math.cos(angle);
+    const rayDirY = Math.sin(angle);
+    let mapX = Math.floor(originX);
+    let mapY = Math.floor(originY);
+    const deltaDistX = Math.abs(1 / (Math.abs(rayDirX) < 1e-9 ? 1e-9 : rayDirX));
+    const deltaDistY = Math.abs(1 / (Math.abs(rayDirY) < 1e-9 ? 1e-9 : rayDirY));
+    let stepX, stepY, sideDistX, sideDistY;
+    if (rayDirX < 0) { stepX = -1; sideDistX = (originX - mapX) * deltaDistX; }
+    else { stepX = 1; sideDistX = (mapX + 1 - originX) * deltaDistX; }
+    if (rayDirY < 0) { stepY = -1; sideDistY = (originY - mapY) * deltaDistY; }
+    else { stepY = 1; sideDistY = (mapY + 1 - originY) * deltaDistY; }
+
+    let side = 0;
+    let distance = 0;
+    while (distance <= maxDistance) {
+      if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; side = 0; }
+      else { sideDistY += deltaDistY; mapY += stepY; side = 1; }
+
+      if (!inBounds(level, mapX, mapY)) {
+        return { hit: false, distance: maxDistance, x: originX + rayDirX * maxDistance, y: originY + rayDirY * maxDistance, mapX: mapX, mapY: mapY, side: side };
+      }
+      if (side === 0) distance = (mapX - originX + (1 - stepX) / 2) / rayDirX;
+      else distance = (mapY - originY + (1 - stepY) / 2) / rayDirY;
+      if (distance < 0) distance = 0;
+      if (isWall(level, mapX, mapY)) {
+        return {
+          hit: true,
+          distance: Math.min(distance, maxDistance),
+          x: originX + rayDirX * distance,
+          y: originY + rayDirY * distance,
+          mapX: mapX,
+          mapY: mapY,
+          side: side,
+          rayDirX: rayDirX,
+          rayDirY: rayDirY
+        };
+      }
+    }
+    return { hit: false, distance: maxDistance, x: originX + rayDirX * maxDistance, y: originY + rayDirY * maxDistance, mapX: mapX, mapY: mapY, side: side };
+  }
+
+  // ---------------------------------------------------------------------------
+  // 8. First-person renderer
+  // ---------------------------------------------------------------------------
+
+  function sampleTexturePixel(textureId, u, v) {
+    const id = appState.assets.textureData[textureId] ? textureId : 'missing_checker';
+    const data = appState.assets.textureData[id];
+    const x = ((u * TEXTURE_SIZE) | 0) & (TEXTURE_SIZE - 1);
+    const y = ((v * TEXTURE_SIZE) | 0) & (TEXTURE_SIZE - 1);
+    const idx = (y * TEXTURE_SIZE + x) * 4;
+    return [data[idx], data[idx + 1], data[idx + 2]];
+  }
+
+  function renderFloorAndCeiling() {
+    const width = INTERNAL_VIEW_WIDTH;
+    const height = INTERNAL_VIEW_HEIGHT;
+    const player = appState.player;
+    const level = appState.level;
+    const image = viewBufferCtx.createImageData(width, height);
+    const pixels = image.data;
+    const horizon = height / 2;
+    const leftAngle = player.angle - player.fov / 2;
+    const rightAngle = player.angle + player.fov / 2;
+    const rayDirLeftX = Math.cos(leftAngle);
+    const rayDirLeftY = Math.sin(leftAngle);
+    const rayDirRightX = Math.cos(rightAngle);
+    const rayDirRightY = Math.sin(rightAngle);
+    const posZ = height * 0.5;
+
+    for (let y = 0; y < height; y++) {
+      const below = y >= horizon;
+      const mirroredY = below ? y : height - y - 1;
+      const p = mirroredY - horizon;
+      const rowDistance = p <= 0 ? player.renderDistance : Math.min(player.renderDistance, posZ / p);
+      const stepX = rowDistance * (rayDirRightX - rayDirLeftX) / width;
+      const stepY = rowDistance * (rayDirRightY - rayDirLeftY) / width;
+      let floorX = player.x + rowDistance * rayDirLeftX;
+      let floorY = player.y + rowDistance * rayDirLeftY;
+      const fog = clamp(rowDistance / player.renderDistance, 0, 1);
+      const darken = below ? lerp(1, .30, fog) : lerp(.75, .18, fog);
+
+      for (let x = 0; x < width; x++) {
+        const cellX = Math.floor(floorX);
+        const cellY = Math.floor(floorY);
+        let textureId = below ? level.defaultFloorTexture : level.defaultCeilingTexture;
+        const cell = getCell(level, cellX, cellY);
+        if (cell) textureId = below ? (cell.floorTexture || textureId) : (cell.ceilingTexture || textureId);
+        const color = sampleTexturePixel(textureId, floorX - Math.floor(floorX), floorY - Math.floor(floorY));
+        const idx = (y * width + x) * 4;
+        pixels[idx] = color[0] * darken;
+        pixels[idx + 1] = color[1] * darken;
+        pixels[idx + 2] = color[2] * darken;
+        pixels[idx + 3] = 255;
+        floorX += stepX;
+        floorY += stepY;
+      }
+    }
+    viewBufferCtx.putImageData(image, 0, 0);
+  }
+
+  function renderWalls() {
+    const width = INTERNAL_VIEW_WIDTH;
+    const height = INTERNAL_VIEW_HEIGHT;
+    const player = appState.player;
+    viewBufferCtx.imageSmoothingEnabled = false;
+    for (let column = 0; column < width; column++) {
+      const cameraX = column / width;
+      const rayAngle = player.angle - player.fov / 2 + cameraX * player.fov;
+      const hit = castWallRay(player.x, player.y, rayAngle, player.renderDistance);
+      let correctedDistance = hit.distance * Math.cos(rayAngle - player.angle);
+      correctedDistance = Math.max(0.0001, correctedDistance);
+      depthBuffer[column] = correctedDistance;
+      if (!hit.hit) continue;
+      const cell = getCell(appState.level, hit.mapX, hit.mapY);
+      const texture = appState.assets.textures[(cell && cell.wallTexture) || 'missing_checker'] || appState.assets.textures.missing_checker;
+      let wallX = hit.side === 0 ? hit.y - Math.floor(hit.y) : hit.x - Math.floor(hit.x);
+      if (hit.side === 0 && hit.rayDirX > 0) wallX = 1 - wallX;
+      if (hit.side === 1 && hit.rayDirY < 0) wallX = 1 - wallX;
+      const texX = clamp(Math.floor(wallX * texture.width), 0, texture.width - 1);
+      const wallHeight = Math.min(height * 6, Math.floor(height / correctedDistance));
+      const drawStart = Math.floor(-wallHeight / 2 + height / 2);
+      const drawEnd = Math.floor(wallHeight / 2 + height / 2);
+      viewBufferCtx.drawImage(texture, texX, 0, 1, texture.height, column, drawStart, 1, wallHeight);
+      const shade = clamp(correctedDistance / player.renderDistance, 0, 1);
+      const sideShade = hit.side === 1 ? .12 : 0;
+      viewBufferCtx.fillStyle = 'rgba(0,0,0,' + (shade * .55 + sideShade).toFixed(3) + ')';
+      viewBufferCtx.fillRect(column, Math.max(0, drawStart), 1, Math.min(height, drawEnd) - Math.max(0, drawStart));
+    }
+  }
+
+  function getSpriteForEntity(entity) {
+    if (entity.state === 'dead') {
+      if (entity.sprite === 'dino_trex_01') return appState.assets.sprites.dino_trex_dead;
+      return appState.assets.sprites.dino_raptor_dead;
+    }
+    return appState.assets.sprites[entity.sprite] || appState.assets.sprites.missing_sprite;
+  }
+
+  function renderSprites() {
+    const width = INTERNAL_VIEW_WIDTH;
+    const height = INTERNAL_VIEW_HEIGHT;
+    const player = appState.player;
+    const projections = [];
+    for (const entity of appState.level.entities) {
+      if (entity.type !== 'dinosaur') continue;
+      const dx = entity.x - player.x;
+      const dy = entity.y - player.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance > player.renderDistance || distance < 0.05) continue;
+      const angleToEntity = Math.atan2(dy, dx);
+      const relativeAngle = normalizeAngle(angleToEntity - player.angle);
+      if (Math.abs(relativeAngle) > player.fov / 2 + 0.24) continue;
+      const correctedDistance = distance * Math.cos(relativeAngle);
+      if (correctedDistance <= 0) continue;
+      const screenX = width / 2 + Math.tan(relativeAngle) / Math.tan(player.fov / 2) * width / 2;
+      const spriteHeight = Math.min(height * 2.2, height / correctedDistance * (entity.state === 'dead' ? .58 : 1.08));
+      const spriteWidth = spriteHeight * (entity.state === 'dead' ? 1.35 : .78);
+      projections.push({ entity: entity, distance: correctedDistance, screenX: screenX, width: spriteWidth, height: spriteHeight });
+    }
+    projections.sort(function(a, b) { return b.distance - a.distance; });
+    viewBufferCtx.imageSmoothingEnabled = false;
+    for (const p of projections) {
+      const sprite = getSpriteForEntity(p.entity);
+      const left = Math.floor(p.screenX - p.width / 2);
+      const right = Math.floor(p.screenX + p.width / 2);
+      const top = Math.floor(INTERNAL_VIEW_HEIGHT / 2 - p.height / 2 + (p.entity.state === 'dead' ? p.height * .35 : 0));
+      for (let x = left; x <= right; x++) {
+        if (x < 0 || x >= INTERNAL_VIEW_WIDTH) continue;
+        if (p.distance > depthBuffer[x] + 0.02) continue;
+        const srcX = clamp(Math.floor((x - left) / Math.max(1, right - left) * sprite.width), 0, sprite.width - 1);
+        viewBufferCtx.drawImage(sprite, srcX, 0, 1, sprite.height, x, top, 1, p.height);
+        if (p.entity.hitFlash && p.entity.hitFlash > 0) {
+          viewBufferCtx.fillStyle = 'rgba(255,255,255,' + clamp(p.entity.hitFlash * 3, 0, .7).toFixed(2) + ')';
+          viewBufferCtx.fillRect(x, top, 1, p.height);
+        }
+      }
+    }
+  }
+
+  function renderFirstPersonView() {
+    renderFloorAndCeiling();
+    renderWalls();
+    renderSprites();
+    viewCtx.imageSmoothingEnabled = false;
+    viewCtx.drawImage(viewBuffer, 0, 0, viewCanvas.width, viewCanvas.height);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 9. Map renderer and live editor
+  // ---------------------------------------------------------------------------
+
+  function getMapTransform() {
+    const level = appState.level;
+    const padding = 30;
+    const baseScale = Math.min((mapCanvas.clientWidth - padding * 2) / level.width, (mapCanvas.clientHeight - padding * 2) / level.height);
+    const scale = Math.max(4, baseScale * appState.editor.mapZoom);
+    return {
+      scale: scale,
+      offsetX: mapCanvas.clientWidth / 2 - level.width * scale / 2 + appState.editor.mapOffsetX,
+      offsetY: mapCanvas.clientHeight / 2 - level.height * scale / 2 + appState.editor.mapOffsetY
+    };
+  }
+
+  function worldToMapScreen(x, y, transform) {
+    return { x: transform.offsetX + x * transform.scale, y: transform.offsetY + y * transform.scale };
+  }
+
+  function renderMapView() {
+    const w = mapCanvas.width;
+    const h = mapCanvas.height;
+    const dpr = window.devicePixelRatio || 1;
+    mapCtx.save();
+    mapCtx.scale(dpr, dpr);
+    mapCtx.clearRect(0, 0, mapCanvas.clientWidth, mapCanvas.clientHeight);
+    mapCtx.fillStyle = '#0b0f17';
+    mapCtx.fillRect(0, 0, mapCanvas.clientWidth, mapCanvas.clientHeight);
+
+    const level = appState.level;
+    const player = appState.player;
+    const transform = getMapTransform();
+    const s = transform.scale;
+
+    // FOV and render range behind cells.
+    const pScreen = worldToMapScreen(player.x, player.y, transform);
+    const start = player.angle - player.fov / 2;
+    const end = player.angle + player.fov / 2;
+    mapCtx.save();
+    mapCtx.beginPath();
+    mapCtx.moveTo(pScreen.x, pScreen.y);
+    mapCtx.arc(pScreen.x, pScreen.y, player.renderDistance * s, start, end);
+    mapCtx.closePath();
+    mapCtx.fillStyle = 'rgba(126,240,163,.09)';
+    mapCtx.fill();
+    mapCtx.strokeStyle = 'rgba(126,240,163,.42)';
+    mapCtx.lineWidth = 1.5;
+    mapCtx.stroke();
+    mapCtx.restore();
+
+    // Cells.
+    for (let y = 0; y < level.height; y++) {
+      for (let x = 0; x < level.width; x++) {
+        const cell = getCell(level, x, y);
+        const sx = transform.offsetX + x * s;
+        const sy = transform.offsetY + y * s;
+        if (cell.type === 'wall') {
+          const texture = appState.assets.textures[cell.wallTexture] || appState.assets.textures.missing_checker;
+          mapCtx.drawImage(texture, sx, sy, s, s);
+          mapCtx.fillStyle = 'rgba(0,0,0,.20)';
+          mapCtx.fillRect(sx, sy, s, s);
+        } else {
+          mapCtx.fillStyle = isBoundary(level, x, y) ? '#151b24' : '#101722';
+          mapCtx.fillRect(sx, sy, s, s);
+        }
+        mapCtx.strokeStyle = 'rgba(255,255,255,.10)';
+        mapCtx.lineWidth = 1;
+        mapCtx.strokeRect(sx + .5, sy + .5, s, s);
+      }
+    }
+
+    // Dinosaurs.
+    for (const entity of level.entities) {
+      if (entity.type !== 'dinosaur') continue;
+      const e = worldToMapScreen(entity.x, entity.y, transform);
+      mapCtx.beginPath();
+      mapCtx.arc(e.x, e.y, Math.max(5, entity.radius * s), 0, TAU);
+      mapCtx.fillStyle = entity.state === 'dead' ? 'rgba(139,101,83,.9)' : (entity.sprite === 'dino_trex_01' ? '#c48449' : '#72bc48');
+      mapCtx.fill();
+      mapCtx.lineWidth = 2;
+      mapCtx.strokeStyle = entity.state === 'dead' ? 'rgba(255,255,255,.28)' : 'rgba(0,0,0,.65)';
+      mapCtx.stroke();
+      mapCtx.fillStyle = '#061006';
+      mapCtx.font = Math.max(9, Math.min(14, s * .22)) + 'px system-ui';
+      mapCtx.textAlign = 'center';
+      mapCtx.textBaseline = 'middle';
+      mapCtx.fillText(entity.state === 'dead' ? '×' : 'D', e.x, e.y + .5);
+    }
+
+    // Player direction and body.
+    const dirX = Math.cos(player.angle);
+    const dirY = Math.sin(player.angle);
+    const rightX = Math.cos(player.angle + Math.PI * .72);
+    const rightY = Math.sin(player.angle + Math.PI * .72);
+    const leftX = Math.cos(player.angle - Math.PI * .72);
+    const leftY = Math.sin(player.angle - Math.PI * .72);
+    const r = Math.max(8, player.radius * s * 1.6);
+    mapCtx.beginPath();
+    mapCtx.moveTo(pScreen.x + dirX * r * 1.5, pScreen.y + dirY * r * 1.5);
+    mapCtx.lineTo(pScreen.x + rightX * r, pScreen.y + rightY * r);
+    mapCtx.lineTo(pScreen.x + leftX * r, pScreen.y + leftY * r);
+    mapCtx.closePath();
+    mapCtx.fillStyle = '#ffffff';
+    mapCtx.fill();
+    mapCtx.strokeStyle = '#000';
+    mapCtx.lineWidth = 2;
+    mapCtx.stroke();
+    mapCtx.beginPath();
+    mapCtx.moveTo(pScreen.x, pScreen.y);
+    mapCtx.lineTo(pScreen.x + dirX * s * .85, pScreen.y + dirY * s * .85);
+    mapCtx.strokeStyle = '#ffe072';
+    mapCtx.lineWidth = 3;
+    mapCtx.stroke();
+
+    // Hover/reject feedback.
+    const hx = appState.editor.hoveredCellX;
+    const hy = appState.editor.hoveredCellY;
+    if (inBounds(level, hx, hy)) {
+      mapCtx.strokeStyle = appState.editor.selectedTool === EDITOR_TOOLS.ERASE ? '#ff6969' : '#7ef0a3';
+      mapCtx.lineWidth = 3;
+      mapCtx.strokeRect(transform.offsetX + hx * s + 1.5, transform.offsetY + hy * s + 1.5, s - 3, s - 3);
+    }
+    if (appState.editor.rejectTimer > 0 && inBounds(level, appState.editor.rejectCellX, appState.editor.rejectCellY)) {
+      mapCtx.fillStyle = 'rgba(255,80,80,.38)';
+      mapCtx.fillRect(transform.offsetX + appState.editor.rejectCellX * s, transform.offsetY + appState.editor.rejectCellY * s, s, s);
+    }
+
+    // Labels.
+    mapCtx.fillStyle = 'rgba(0,0,0,.50)';
+    mapCtx.fillRect(10, 10, 280, 30);
+    mapCtx.fillStyle = '#eaf2ff';
+    mapCtx.font = '12px system-ui';
+    mapCtx.textAlign = 'left';
+    mapCtx.textBaseline = 'middle';
+    mapCtx.fillText('Tool: ' + appState.editor.selectedTool + '  |  Tap map to edit, pinch to zoom', 20, 25);
+    mapCtx.restore();
+  }
+
+  function editCell(x, y) {
+    const level = appState.level;
+    if (!inBounds(level, x, y)) return;
+    const playerCell = pointCell(appState.player.x, appState.player.y);
+    const existingEntity = entityInCell(level, x, y);
+    const tool = appState.editor.selectedTool;
+    if (tool === EDITOR_TOOLS.WALL) {
+      if (x === playerCell.x && y === playerCell.y) return flashRejected(x, y, 'Cannot place a wall on the player.');
+      if (existingEntity && existingEntity.state !== 'dead') return flashRejected(x, y, 'Remove the dinosaur before placing a wall.');
+      level.entities = level.entities.filter(function(entity) { return !(Math.floor(entity.x) === x && Math.floor(entity.y) === y); });
+      level.cells[cellIndex(level, x, y)] = makeWallCell(appState.editor.selectedWallTexture, appState.editor.selectedFloorTexture, appState.editor.selectedCeilingTexture);
+      updateToast('Wall placed.');
+    } else if (tool === EDITOR_TOOLS.DINOSAUR) {
+      if (isWall(level, x, y)) return flashRejected(x, y, 'Dinosaurs cannot be placed inside walls.');
+      if (x === playerCell.x && y === playerCell.y) return flashRejected(x, y, 'Cannot place a dinosaur on the player.');
+      if (existingEntity) return flashRejected(x, y, 'This cell already has a dinosaur.');
+      level.entities.push({ id: safeId('dino'), type: 'dinosaur', x: x + .5, y: y + .5, radius: .3, sprite: appState.editor.selectedDinosaurSprite, health: 100, state: 'idle', blocking: true });
+      updateToast('Dinosaur placed.');
+    } else if (tool === EDITOR_TOOLS.ERASE) {
+      if (existingEntity) {
+        level.entities = level.entities.filter(function(entity) { return entity !== existingEntity; });
+        updateToast('Dinosaur removed.');
+      } else if (getCell(level, x, y).type === 'wall') {
+        if (isBoundary(level, x, y)) return flashRejected(x, y, 'Boundary walls are locked.');
+        if (x === playerCell.x && y === playerCell.y) return flashRejected(x, y, 'Player cell must remain empty.');
+        level.cells[cellIndex(level, x, y)] = makeEmptyCell(appState.editor.selectedFloorTexture, appState.editor.selectedCeilingTexture);
+        updateToast('Wall removed.');
+      }
+    }
+    saveCurrentLevelToStorage();
+  }
+
+  // ---------------------------------------------------------------------------
+  // 10. Combat system
+  // ---------------------------------------------------------------------------
+
+  function shoot() {
+    const player = appState.player;
+    const wallHit = castWallRay(player.x, player.y, player.angle, player.renderDistance);
+    const maxDistance = Math.min(wallHit.distance, player.renderDistance);
+    let closest = null;
+    let closestAlong = Infinity;
+    const forwardX = Math.cos(player.angle);
+    const forwardY = Math.sin(player.angle);
+    for (const entity of appState.level.entities) {
+      if (entity.type !== 'dinosaur' || entity.state === 'dead') continue;
+      const dx = entity.x - player.x;
+      const dy = entity.y - player.y;
+      const along = dx * forwardX + dy * forwardY;
+      if (along <= 0 || along > maxDistance) continue;
+      const perpendicular = Math.abs(dx * forwardY - dy * forwardX);
+      const angular = Math.abs(normalizeAngle(Math.atan2(dy, dx) - player.angle));
+      if (perpendicular <= entity.radius + 0.04 || angular <= SHOOT_CONE_RADIANS) {
+        if (along < closestAlong) { closest = entity; closestAlong = along; }
+      }
+    }
+    appState.fx.shootFlash = .12;
+    crosshair.classList.add('flash');
+    damageFlash.classList.add('show');
+    setTimeout(function() { crosshair.classList.remove('flash'); damageFlash.classList.remove('show'); }, 95);
+    if (!closest) {
+      updateToast('Shot fired.');
+      return;
+    }
+    closest.health -= WEAPON_DAMAGE;
+    closest.hitFlash = .25;
+    if (closest.health <= 0) {
+      closest.health = 0;
+      closest.state = 'dead';
+      closest.blocking = false;
+      updateToast('Dinosaur down.');
+    } else {
+      closest.state = 'alert';
+      updateToast('Dinosaur hit: ' + closest.health + ' HP left.');
+    }
+    saveCurrentLevelToStorage();
+  }
+
+  function updateDinosaurs(deltaSeconds) {
+    for (const entity of appState.level.entities) {
+      if (entity.hitFlash) entity.hitFlash = Math.max(0, entity.hitFlash - deltaSeconds);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 11. Toolbar and save/load UI
+  // ---------------------------------------------------------------------------
+
+  function addButton(parent, label, className, handler) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    button.className = className;
+    button.addEventListener('click', handler);
+    parent.appendChild(button);
+    return button;
+  }
+
+  function addGroup(label) {
+    const group = document.createElement('div');
+    group.className = 'group';
+    if (label) {
+      const span = document.createElement('span');
+      span.className = 'groupLabel';
+      span.textContent = label;
+      group.appendChild(span);
+    }
+    toolbar.appendChild(group);
+    return group;
+  }
+
+  function addSwatch(parent, textureId, type, handler) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'swatchButton';
+    button.dataset.texture = textureId;
+    button.dataset.type = type;
+    button.title = textureId;
+    const preview = document.createElement('canvas');
+    preview.width = 44;
+    preview.height = 44;
+    const ctx = preview.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    const texture = appState.assets.textures[textureId];
+    if (texture) ctx.drawImage(texture, 0, 0, 44, 44);
+    button.appendChild(preview);
+    button.addEventListener('click', handler);
+    parent.appendChild(button);
+    return button;
+  }
+
+  function createToolbar() {
+    toolbar.innerHTML = '';
+    const tools = addGroup('Tool');
+    addButton(tools, 'Wall', 'toolButton', function() { setTool(EDITOR_TOOLS.WALL); }).dataset.tool = EDITOR_TOOLS.WALL;
+    addButton(tools, 'Dino', 'toolButton', function() { setTool(EDITOR_TOOLS.DINOSAUR); }).dataset.tool = EDITOR_TOOLS.DINOSAUR;
+    addButton(tools, 'Erase', 'toolButton', function() { setTool(EDITOR_TOOLS.ERASE); }).dataset.tool = EDITOR_TOOLS.ERASE;
+
+    const walls = addGroup('Wall');
+    Object.keys(textureDefinitions).filter(function(id) { return id.indexOf('wall_') === 0; }).forEach(function(id) {
+      addSwatch(walls, id, 'wall', function() { appState.editor.selectedWallTexture = id; refreshToolbarActiveState(); updateToast('Wall texture: ' + id); });
+    });
+
+    const floors = addGroup('Floor');
+    Object.keys(textureDefinitions).filter(function(id) { return id.indexOf('floor_') === 0; }).forEach(function(id) {
+      addSwatch(floors, id, 'floor', function() { appState.editor.selectedFloorTexture = id; refreshToolbarActiveState(); updateToast('Floor texture: ' + id); });
+    });
+
+    const ceilings = addGroup('Ceiling');
+    Object.keys(textureDefinitions).filter(function(id) { return id.indexOf('ceiling_') === 0; }).forEach(function(id) {
+      addSwatch(ceilings, id, 'ceiling', function() { appState.editor.selectedCeilingTexture = id; refreshToolbarActiveState(); updateToast('Ceiling texture: ' + id); });
+    });
+
+    const dinos = addGroup('Dino');
+    ['dino_raptor_01', 'dino_trex_01'].forEach(function(id) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'swatchButton';
+      button.dataset.sprite = id;
+      button.title = id;
+      const preview = document.createElement('canvas');
+      preview.width = 44;
+      preview.height = 44;
+      const ctx = preview.getContext('2d');
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(appState.assets.sprites[id], 0, 0, 44, 44);
+      button.appendChild(preview);
+      button.addEventListener('click', function() { appState.editor.selectedDinosaurSprite = id; refreshToolbarActiveState(); updateToast('Dinosaur sprite: ' + id); });
+      dinos.appendChild(button);
+    });
+
+    const io = addGroup('Level');
+    addButton(io, 'Export', 'smallButton', openExportModal);
+    addButton(io, 'Import', 'smallButton', openImportModal);
+    addButton(io, 'Reset', 'smallButton', function() {
+      loadLevel(createDefaultLevel());
+      updateToast('Level reset.');
+    });
+    refreshToolbarActiveState();
+  }
+
+  function refreshToolbarActiveState() {
+    toolbar.querySelectorAll('button').forEach(function(button) { button.classList.remove('active'); });
+    toolbar.querySelectorAll('[data-tool="' + appState.editor.selectedTool + '"]').forEach(function(button) { button.classList.add('active'); });
+    toolbar.querySelectorAll('[data-texture="' + appState.editor.selectedWallTexture + '"][data-type="wall"]').forEach(function(button) { button.classList.add('active'); });
+    toolbar.querySelectorAll('[data-texture="' + appState.editor.selectedFloorTexture + '"][data-type="floor"]').forEach(function(button) { button.classList.add('active'); });
+    toolbar.querySelectorAll('[data-texture="' + appState.editor.selectedCeilingTexture + '"][data-type="ceiling"]').forEach(function(button) { button.classList.add('active'); });
+    toolbar.querySelectorAll('[data-sprite="' + appState.editor.selectedDinosaurSprite + '"]').forEach(function(button) { button.classList.add('active'); });
+  }
+
+  function openExportModal() {
+    levelText.value = JSON.stringify(cloneLevelForExport(appState.level), null, 2);
+    modalStatus.textContent = 'Copy, download, or edit and reload this JSON.';
+    modalBackdrop.classList.add('show');
+    levelText.focus();
+    levelText.select();
+  }
+
+  function openImportModal() {
+    levelText.value = JSON.stringify(cloneLevelForExport(appState.level), null, 2);
+    modalStatus.textContent = 'Paste exported JSON here, then choose Load From Text.';
+    modalBackdrop.classList.add('show');
+    levelText.focus();
+  }
+
+  document.getElementById('closeModalButton').addEventListener('click', function() { modalBackdrop.classList.remove('show'); });
+  modalBackdrop.addEventListener('pointerdown', function(event) { if (event.target === modalBackdrop) modalBackdrop.classList.remove('show'); });
+  document.getElementById('copyJsonButton').addEventListener('click', function() {
+    levelText.select();
+    navigator.clipboard && navigator.clipboard.writeText(levelText.value).then(function() {
+      modalStatus.textContent = 'Copied to clipboard.';
+    }).catch(function() {
+      document.execCommand('copy');
+      modalStatus.textContent = 'Copied.';
+    });
+  });
+  document.getElementById('downloadJsonButton').addEventListener('click', function() {
+    const blob = new Blob([levelText.value], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'level.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+    modalStatus.textContent = 'Download started.';
+  });
+  document.getElementById('loadJsonButton').addEventListener('click', function() {
+    try {
+      const imported = JSON.parse(levelText.value);
+      loadLevel(imported);
+      modalStatus.textContent = 'Level loaded successfully.';
+      updateToast('Level imported.');
+      setTimeout(function() { modalBackdrop.classList.remove('show'); }, 250);
+    } catch (error) {
+      modalStatus.textContent = 'Import failed: ' + error.message;
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // 12. Resizing and main loop
+  // ---------------------------------------------------------------------------
+
+  function resizeCanvasToDisplaySize(canvas) {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    const width = Math.max(1, Math.round(rect.width * dpr));
+    const height = Math.max(1, Math.round(rect.height * dpr));
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+  }
+
+  function resize() {
+    resizeCanvasToDisplaySize(viewCanvas);
+    resizeCanvasToDisplaySize(mapCanvas);
+    viewCtx.imageSmoothingEnabled = false;
+  }
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', resize);
+
+  function updateUiTimers(deltaSeconds) {
+    if (appState.editor.rejectTimer > 0) appState.editor.rejectTimer = Math.max(0, appState.editor.rejectTimer - deltaSeconds);
+    if (appState.fx.hitTextTimer > 0) {
+      appState.fx.hitTextTimer = Math.max(0, appState.fx.hitTextTimer - deltaSeconds);
+      if (appState.fx.hitTextTimer <= 0) messageToast.classList.remove('show');
+    }
+    appState.fx.fpsAccum += deltaSeconds;
+    appState.fx.fpsFrames++;
+    if (appState.fx.fpsAccum >= .5) {
+      appState.fx.fps = Math.round(appState.fx.fpsFrames / appState.fx.fpsAccum);
+      appState.fx.fpsAccum = 0;
+      appState.fx.fpsFrames = 0;
+      fpsText.textContent = 'FPS ' + appState.fx.fps;
+      hintText.textContent = 'Tool ' + appState.editor.selectedTool + ' | Space/tap fires | 1-3 switch tools';
+    }
+  }
+
+  let lastTime = performance.now();
+  function frame(now) {
+    const deltaSeconds = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+    resize();
+    updateInput(deltaSeconds);
+    updateDinosaurs(deltaSeconds);
+    updateUiTimers(deltaSeconds);
+    renderFirstPersonView();
+    renderMapView();
+    requestAnimationFrame(frame);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bootstrap
+  // ---------------------------------------------------------------------------
+
+  generateAssets();
+  if (!tryLoadFromStorage()) loadLevel(createDefaultLevel());
+  createToolbar();
+  resize();
+  updateJoystickVisual();
+  updateToast('Ready. Edit the map live while the renderer runs.');
+  requestAnimationFrame(frame);
+  </script>
+</body>
+</html>

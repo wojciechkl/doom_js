@@ -1,0 +1,1633 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>2.5D Renderer and Live Level Editor</title>
+  <style>
+    /* 1. Base layout */
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: #111;
+      font-family: monospace;
+      color: #eee;
+    }
+    #app {
+      display: flex;
+      flex-direction: row;
+      width: 100vw;
+      height: 100vh;
+    }
+    #viewPanel {
+      position: relative;
+      flex: 1;
+      min-width: 0; min-height: 0;
+      background: #000;
+    }
+    #mapPanel {
+      position: relative;
+      flex: 1;
+      min-width: 0; min-height: 0;
+      background: #1a1a1a;
+      display: flex;
+      flex-direction: column;
+    }
+    #viewCanvas {
+      width: 100%; height: 100%;
+      display: block;
+      touch-action: none;
+    }
+    #mapCanvas {
+      flex: 1;
+      min-height: 0;
+      display: block;
+      touch-action: none;
+      cursor: crosshair;
+    }
+
+    /* 2. Toolbar */
+    #toolbar {
+      background: #222;
+      border-top: 1px solid #444;
+      padding: 4px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: center;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+    .tb-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 3px;
+      align-items: center;
+      border-right: 1px solid #444;
+      padding-right: 6px;
+      margin-right: 2px;
+    }
+    .tb-group:last-child { border-right: none; }
+    .tb-label {
+      font-size: 10px;
+      color: #888;
+      width: 100%;
+      margin-bottom: 2px;
+    }
+    .tb-btn {
+      min-width: 44px; min-height: 36px;
+      padding: 4px 8px;
+      background: #333;
+      border: 1px solid #555;
+      color: #ccc;
+      font-size: 11px;
+      cursor: pointer;
+      border-radius: 3px;
+      white-space: nowrap;
+      transition: background 0.1s;
+    }
+    .tb-btn:hover { background: #444; }
+    .tb-btn.active { background: #c85000; border-color: #ff7700; color: #fff; }
+    .tb-tex {
+      width: 36px; height: 36px;
+      border: 2px solid #555;
+      cursor: pointer;
+      border-radius: 3px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .tb-tex.active { border-color: #ff7700; }
+    .tb-tex canvas { width: 100%; height: 100%; display: block; }
+    #fpsCounter {
+      position: absolute;
+      top: 4px; left: 4px;
+      background: rgba(0,0,0,0.5);
+      padding: 2px 6px;
+      font-size: 12px;
+      pointer-events: none;
+      border-radius: 3px;
+    }
+    #crosshair {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      width: 20px; height: 20px;
+    }
+    #crosshair::before, #crosshair::after {
+      content: '';
+      position: absolute;
+      background: rgba(255,255,255,0.8);
+    }
+    #crosshair::before { width: 2px; height: 100%; left: 50%; transform: translateX(-50%); }
+    #crosshair::after  { width: 100%; height: 2px; top: 50%; transform: translateY(-50%); }
+    #shootFlash {
+      position: absolute;
+      inset: 0;
+      background: rgba(255,200,50,0.25);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.05s;
+    }
+    #hitMarker {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 30px; height: 30px;
+      pointer-events: none;
+      opacity: 0;
+    }
+
+    /* 3. Mobile controls */
+    #mobileControls {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 140px;
+      pointer-events: none;
+      display: none;
+    }
+    #joystickZone {
+      position: absolute;
+      bottom: 10px; left: 10px;
+      width: 120px; height: 120px;
+      pointer-events: all;
+    }
+    #joystickBase {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.1);
+      border: 2px solid rgba(255,255,255,0.3);
+    }
+    #joystickKnob {
+      position: absolute;
+      width: 48px; height: 48px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.35);
+      border: 2px solid rgba(255,255,255,0.6);
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+    }
+    #lookZone {
+      position: absolute;
+      bottom: 10px; right: 10px;
+      width: 120px; height: 120px;
+      pointer-events: all;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.05);
+    }
+    #shootZone {
+      position: absolute;
+      inset: 0;
+      pointer-events: all;
+    }
+
+    /* Modal */
+    #modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    #modal.open { display: flex; }
+    #modalBox {
+      background: #222;
+      border: 1px solid #555;
+      border-radius: 6px;
+      padding: 16px;
+      width: min(90vw, 520px);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    #modalTitle { font-size: 14px; font-weight: bold; color: #eee; }
+    #modalTextarea {
+      width: 100%; height: 220px;
+      background: #111; color: #9ef;
+      border: 1px solid #444; border-radius: 4px;
+      padding: 8px; font-family: monospace; font-size: 11px;
+      resize: vertical;
+    }
+    #modalError { color: #f66; font-size: 12px; min-height: 18px; }
+    .modal-btns { display: flex; gap: 8px; justify-content: flex-end; }
+    .modal-btns button {
+      padding: 6px 16px; font-size: 13px; cursor: pointer;
+      border-radius: 4px; border: 1px solid #555;
+    }
+    #modalOk { background: #c85000; border-color: #ff7700; color: #fff; }
+    #modalCancel { background: #333; color: #ccc; }
+
+    /* 4. Responsive */
+    @media (max-width: 768px) {
+      #app { flex-direction: column; }
+      #mobileControls { display: block; }
+      #toolbar { max-height: 90px; }
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+  <section id="viewPanel">
+    <canvas id="viewCanvas"></canvas>
+    <div id="fpsCounter">0 FPS</div>
+    <div id="crosshair"></div>
+    <div id="shootFlash"></div>
+    <canvas id="hitMarker" width="30" height="30"></canvas>
+    <div id="mobileControls">
+      <div id="shootZone"></div>
+      <div id="joystickZone">
+        <div id="joystickBase"></div>
+        <div id="joystickKnob"></div>
+      </div>
+      <div id="lookZone"></div>
+    </div>
+  </section>
+  <section id="mapPanel">
+    <canvas id="mapCanvas"></canvas>
+    <div id="toolbar"></div>
+  </section>
+</div>
+<div id="modal">
+  <div id="modalBox">
+    <div id="modalTitle">Level JSON</div>
+    <textarea id="modalTextarea" spellcheck="false"></textarea>
+    <div id="modalError"></div>
+    <div class="modal-btns">
+      <button id="modalCancel">Cancel</button>
+      <button id="modalOk">Load</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ─────────────────────────────────────────────
+// 1. CONSTANTS
+// ─────────────────────────────────────────────
+const INTERNAL_VIEW_WIDTH  = 480;
+const INTERNAL_VIEW_HEIGHT = 270;
+const TEX_SIZE  = 64;
+const WEAPON_DAMAGE = 50;
+const SHOOT_CONE = 0.08;
+const MAP_CELL_MIN = 8;
+
+const EDITOR_TOOLS = { WALL: 'wall', DINOSAUR: 'dinosaur', ERASE: 'erase' };
+
+// ─────────────────────────────────────────────
+// 2. UTILITY
+// ─────────────────────────────────────────────
+function normalizeAngle(a) {
+  while (a >  Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
+function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function makeId() { return 'dino_' + Math.random().toString(36).slice(2, 9); }
+
+// ─────────────────────────────────────────────
+// 3. ASSET GENERATION
+// ─────────────────────────────────────────────
+function makeCanvas(w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  return c;
+}
+
+function createBrickTexture(size) {
+  const c = makeCanvas(size, size), ctx = c.getContext('2d');
+  ctx.fillStyle = '#7a2f22'; ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = '#2a0a06'; ctx.lineWidth = 2;
+  const bh = size / 4;
+  for (let row = 0; row <= 4; row++) {
+    ctx.beginPath(); ctx.moveTo(0, row * bh); ctx.lineTo(size, row * bh); ctx.stroke();
+  }
+  for (let row = 0; row < 4; row++) {
+    const off = (row % 2 === 0) ? 0 : size / 4;
+    for (let bx = -size / 4 + off; bx <= size; bx += size / 2) {
+      ctx.beginPath(); ctx.moveTo(bx, row * bh); ctx.lineTo(bx, (row + 1) * bh); ctx.stroke();
+    }
+  }
+  return c;
+}
+
+function createMetalTexture(size) {
+  const c = makeCanvas(size, size), ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, size, size);
+  g.addColorStop(0, '#5a6070'); g.addColorStop(0.5, '#7a8090'); g.addColorStop(1, '#4a5060');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = '#333a44'; ctx.lineWidth = 1;
+  const step = size / 8;
+  for (let i = 0; i <= size; i += step) {
+    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, size); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(size, i); ctx.stroke();
+  }
+  ctx.strokeStyle = '#8090a0'; ctx.lineWidth = 2;
+  for (let i = 0; i <= size; i += size / 4) {
+    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, size); ctx.stroke();
+  }
+  return c;
+}
+
+function createStoneTexture(size) {
+  const c = makeCanvas(size, size), ctx = c.getContext('2d');
+  ctx.fillStyle = '#5a5040'; ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 80; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const r = Math.random() * 5 + 2;
+    const l = Math.floor(Math.random() * 40 + 50);
+    ctx.fillStyle = `rgb(${l},${l - 10},${l - 20})`;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.strokeStyle = '#302820'; ctx.lineWidth = 1;
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < 3; col++) {
+      const bw = size / 3 + (Math.random() - 0.5) * 4;
+      const bh = size / 3 + (Math.random() - 0.5) * 4;
+      ctx.strokeRect(col * size / 3, row * size / 3, bw, bh);
+    }
+  }
+  return c;
+}
+
+function createFloorStoneTexture(size) {
+  const c = makeCanvas(size, size), ctx = c.getContext('2d');
+  ctx.fillStyle = '#383028'; ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = '#201810'; ctx.lineWidth = 1;
+  const tile = size / 4;
+  for (let y = 0; y <= size; y += tile) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(size, y); ctx.stroke();
+  }
+  for (let x = 0; x <= size; x += tile) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, size); ctx.stroke();
+  }
+  for (let row = 0; row < 4; row++) for (let col = 0; col < 4; col++) {
+    if ((row + col) % 2 === 0) {
+      ctx.fillStyle = '#302820';
+      ctx.fillRect(col * tile + 1, row * tile + 1, tile - 2, tile - 2);
+    }
+  }
+  return c;
+}
+
+function createMudTexture(size) {
+  const c = makeCanvas(size, size), ctx = c.getContext('2d');
+  ctx.fillStyle = '#4a3520'; ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 120; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const v = Math.floor(Math.random() * 30 + 40);
+    ctx.fillStyle = `rgb(${v + 10},${v},${v - 20})`;
+    ctx.beginPath(); ctx.arc(x, y, Math.random() * 3 + 1, 0, Math.PI * 2); ctx.fill();
+  }
+  return c;
+}
+
+function createCeilingMetalTexture(size) {
+  const c = makeCanvas(size, size), ctx = c.getContext('2d');
+  ctx.fillStyle = '#2a2e38'; ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = '#1a1e28'; ctx.lineWidth = 1;
+  const step = size / 4;
+  for (let i = 0; i <= size; i += step) {
+    ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(size, i); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, size); ctx.stroke();
+  }
+  ctx.fillStyle = '#383e4a';
+  for (let row = 0; row < 4; row++) for (let col = 0; col < 4; col++) {
+    if ((row + col) % 2 === 0) ctx.fillRect(col * step + 2, row * step + 2, step - 4, step - 4);
+  }
+  return c;
+}
+
+function createCheckerTexture(size) {
+  const c = makeCanvas(size, size), ctx = c.getContext('2d');
+  const half = size / 2;
+  ctx.fillStyle = '#ff00ff'; ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, half, half);
+  ctx.fillRect(half, half, half, half);
+  return c;
+}
+
+function createRaptorSprite(size) {
+  const c = makeCanvas(size, size), ctx = c.getContext('2d');
+  const s = size / 64;
+  ctx.clearRect(0, 0, size, size);
+  // body
+  ctx.fillStyle = '#4a7a30';
+  ctx.beginPath();
+  ctx.ellipse(size * 0.45, size * 0.55, size * 0.18, size * 0.25, -0.3, 0, Math.PI * 2);
+  ctx.fill();
+  // tail
+  ctx.fillStyle = '#3a6a25';
+  ctx.beginPath();
+  ctx.moveTo(size * 0.27, size * 0.6);
+  ctx.quadraticCurveTo(size * 0.1, size * 0.75, size * 0.05, size * 0.65);
+  ctx.quadraticCurveTo(size * 0.12, size * 0.58, size * 0.27, size * 0.52);
+  ctx.fill();
+  // head
+  ctx.fillStyle = '#5a8a38';
+  ctx.beginPath();
+  ctx.ellipse(size * 0.6, size * 0.32, size * 0.1, size * 0.08, 0.4, 0, Math.PI * 2);
+  ctx.fill();
+  // snout
+  ctx.fillStyle = '#4a7a30';
+  ctx.beginPath();
+  ctx.moveTo(size * 0.65, size * 0.3);
+  ctx.lineTo(size * 0.78, size * 0.34);
+  ctx.lineTo(size * 0.65, size * 0.38);
+  ctx.fill();
+  // eye
+  ctx.fillStyle = '#ff4400';
+  ctx.beginPath();
+  ctx.arc(size * 0.62, size * 0.3, size * 0.025, 0, Math.PI * 2);
+  ctx.fill();
+  // legs
+  ctx.strokeStyle = '#3a6020'; ctx.lineWidth = size * 0.07;
+  ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(size * 0.42, size * 0.72); ctx.lineTo(size * 0.38, size * 0.9); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(size * 0.52, size * 0.72); ctx.lineTo(size * 0.56, size * 0.9); ctx.stroke();
+  // arms
+  ctx.lineWidth = size * 0.04;
+  ctx.beginPath(); ctx.moveTo(size * 0.55, size * 0.45); ctx.lineTo(size * 0.65, size * 0.52); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(size * 0.55, size * 0.48); ctx.lineTo(size * 0.6, size * 0.58); ctx.stroke();
+  return c;
+}
+
+function createTrexSprite(size) {
+  const c = makeCanvas(size, size), ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, size, size);
+  // body
+  ctx.fillStyle = '#6a4020';
+  ctx.beginPath();
+  ctx.ellipse(size * 0.44, size * 0.52, size * 0.22, size * 0.28, -0.15, 0, Math.PI * 2);
+  ctx.fill();
+  // tail
+  ctx.fillStyle = '#5a3015';
+  ctx.beginPath();
+  ctx.moveTo(size * 0.22, size * 0.58);
+  ctx.quadraticCurveTo(size * 0.05, size * 0.72, size * 0.02, size * 0.62);
+  ctx.quadraticCurveTo(size * 0.08, size * 0.54, size * 0.22, size * 0.48);
+  ctx.fill();
+  // head
+  ctx.fillStyle = '#7a4a28';
+  ctx.beginPath();
+  ctx.ellipse(size * 0.62, size * 0.28, size * 0.14, size * 0.1, 0.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(size * 0.7, size * 0.25);
+  ctx.lineTo(size * 0.88, size * 0.3);
+  ctx.lineTo(size * 0.7, size * 0.38);
+  ctx.fill();
+  // teeth
+  ctx.fillStyle = '#fff';
+  for (let i = 0; i < 4; i++) {
+    ctx.fillRect(size * (0.72 + i * 0.04), size * 0.34, size * 0.02, size * 0.04);
+  }
+  // eye
+  ctx.fillStyle = '#ff8800';
+  ctx.beginPath(); ctx.arc(size * 0.65, size * 0.26, size * 0.03, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.arc(size * 0.66, size * 0.26, size * 0.015, 0, Math.PI * 2); ctx.fill();
+  // tiny arms
+  ctx.strokeStyle = '#5a3015'; ctx.lineWidth = size * 0.05; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(size * 0.6, size * 0.42); ctx.lineTo(size * 0.68, size * 0.5); ctx.stroke();
+  // legs
+  ctx.lineWidth = size * 0.09;
+  ctx.beginPath(); ctx.moveTo(size * 0.42, size * 0.75); ctx.lineTo(size * 0.36, size * 0.94); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(size * 0.54, size * 0.76); ctx.lineTo(size * 0.6, size * 0.94); ctx.stroke();
+  return c;
+}
+
+function createDeadDinoSprite(size) {
+  const c = makeCanvas(size, size), ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, size, size);
+  ctx.save();
+  ctx.translate(size / 2, size * 0.8);
+  ctx.rotate(-Math.PI / 2);
+  ctx.translate(-size / 2, -size * 0.5);
+  ctx.globalAlpha = 0.7;
+  ctx.fillStyle = '#3a5020';
+  ctx.beginPath();
+  ctx.ellipse(size * 0.5, size * 0.5, size * 0.38, size * 0.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = '#ff0000';
+  ctx.font = `${size * 0.3}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.fillText('×', size / 2, size * 0.5);
+  return c;
+}
+
+const textureDefinitions = {
+  wall_brick_01:     { generator: createBrickTexture },
+  wall_metal_01:     { generator: createMetalTexture },
+  wall_stone_01:     { generator: createStoneTexture },
+  floor_stone_01:    { generator: createFloorStoneTexture },
+  floor_mud_01:      { generator: createMudTexture },
+  ceiling_metal_01:  { generator: createCeilingMetalTexture }
+};
+
+const spriteDefinitions = {
+  dino_raptor_01: { generator: createRaptorSprite },
+  dino_trex_01:   { generator: createTrexSprite },
+  dino_dead_01:   { generator: createDeadDinoSprite }
+};
+
+// ─────────────────────────────────────────────
+// 4. STATE
+// ─────────────────────────────────────────────
+const appState = {
+  level: null,
+  player: null,
+  editor: {
+    selectedTool: EDITOR_TOOLS.WALL,
+    selectedWallTexture: 'wall_brick_01',
+    selectedFloorTexture: 'floor_stone_01',
+    selectedCeilingTexture: 'ceiling_metal_01',
+    selectedDinosaurSprite: 'dino_raptor_01',
+    hoveredCellX: null,
+    hoveredCellY: null,
+    mapZoom: 1,
+    mapOffsetX: 0,
+    mapOffsetY: 0
+  },
+  input: {
+    keys: Object.create(null),
+    pointer: { active: false, x: 0, y: 0, lastX: 0, lastY: 0 },
+    mobileMoveX: 0, mobileMoveY: 0, mobileLookX: 0,
+    joystickActive: false, joystickId: -1,
+    lookActive: false, lookId: -1, lookLastX: 0
+  },
+  assets: {
+    textures: Object.create(null),
+    sprites: Object.create(null)
+  },
+  shootFlashTimer: 0,
+  hitMarkerTimer: 0,
+  fpsFrames: 0,
+  fpsTime: 0,
+  fps: 0,
+  mapPointers: Object.create(null),
+  mapPinchDist: 0,
+  toolbarDirty: true,
+  lastShotCell: null
+};
+
+// ─────────────────────────────────────────────
+// 5. LEVEL CREATION
+// ─────────────────────────────────────────────
+function createDefaultLevel() {
+  const W = 20, H = 20;
+  const cells = [];
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const isBoundary = x === 0 || y === 0 || x === W - 1 || y === H - 1;
+      const textures = ['wall_brick_01', 'wall_metal_01', 'wall_stone_01'];
+      cells.push({
+        type: isBoundary ? 'wall' : 'empty',
+        wallTexture: textures[Math.floor(Math.random() * textures.length)],
+        floorTexture: 'floor_stone_01',
+        ceilingTexture: 'ceiling_metal_01',
+        blocking: isBoundary
+      });
+    }
+  }
+  // Add some interior walls
+  const interiorWalls = [
+    [3,3],[3,4],[3,5],[3,6],
+    [7,3],[7,4],[7,5],
+    [10,8],[11,8],[12,8],[12,9],[12,10],
+    [5,12],[6,12],[7,12],[7,13],[7,14],
+    [14,3],[14,4],[14,5],[14,6],[14,7],
+    [16,10],[16,11],[16,12],[15,12],
+    [4,16],[5,16],[6,16],
+    [9,15],[10,15],[10,16],[10,17],
+  ];
+  const wtypes = ['wall_brick_01', 'wall_metal_01', 'wall_stone_01'];
+  for (const [wx, wy] of interiorWalls) {
+    const idx = wy * W + wx;
+    cells[idx].type = 'wall';
+    cells[idx].wallTexture = wtypes[Math.floor(Math.random() * wtypes.length)];
+    cells[idx].blocking = true;
+  }
+  const entities = [
+    { id: makeId(), type: 'dinosaur', x: 5.5, y: 5.5, radius: 0.3, sprite: 'dino_raptor_01', health: 100, state: 'idle', blocking: true },
+    { id: makeId(), type: 'dinosaur', x: 9.5, y: 5.5, radius: 0.3, sprite: 'dino_trex_01',   health: 100, state: 'idle', blocking: true },
+    { id: makeId(), type: 'dinosaur', x: 13.5, y: 9.5, radius: 0.3, sprite: 'dino_raptor_01', health: 100, state: 'idle', blocking: true },
+    { id: makeId(), type: 'dinosaur', x: 8.5, y: 14.5, radius: 0.3, sprite: 'dino_trex_01',  health: 100, state: 'idle', blocking: true },
+  ];
+  return {
+    version: 1,
+    width: W,
+    height: H,
+    defaultFloorTexture: 'floor_stone_01',
+    defaultCeilingTexture: 'ceiling_metal_01',
+    playerStart: { x: 2.5, y: 2.5, angle: 0 },
+    cells,
+    entities
+  };
+}
+
+function createPlayer(start) {
+  return {
+    x: start.x, y: start.y,
+    angle: start.angle,
+    radius: 0.25,
+    fov: Math.PI / 3,
+    renderDistance: 14,
+    moveSpeed: 3.5,
+    turnSpeed: 2.6
+  };
+}
+
+function cellAt(level, x, y) {
+  if (x < 0 || y < 0 || x >= level.width || y >= level.height) return null;
+  return level.cells[y * level.width + x];
+}
+
+// ─────────────────────────────────────────────
+// 6. ASSET LOADING
+// ─────────────────────────────────────────────
+function loadAssets() {
+  for (const [id, def] of Object.entries(textureDefinitions)) {
+    appState.assets.textures[id] = def.generator(TEX_SIZE);
+  }
+  appState.assets.textures['_checker'] = createCheckerTexture(TEX_SIZE);
+  for (const [id, def] of Object.entries(spriteDefinitions)) {
+    appState.assets.sprites[id] = def.generator(64);
+  }
+  appState.assets.sprites['_placeholder'] = createCheckerTexture(64);
+}
+
+function getTexture(id) {
+  return appState.assets.textures[id] || appState.assets.textures['_checker'];
+}
+function getSprite(id) {
+  return appState.assets.sprites[id] || appState.assets.sprites['_placeholder'];
+}
+
+// ─────────────────────────────────────────────
+// 7. COLLISION
+// ─────────────────────────────────────────────
+function isWallBlocking(level, cx, cy) {
+  const cell = cellAt(level, cx, cy);
+  return !cell || cell.blocking;
+}
+
+function collidesWithMap(level, x, y, radius) {
+  const r = radius;
+  const corners = [
+    [x - r, y - r], [x + r, y - r],
+    [x - r, y + r], [x + r, y + r]
+  ];
+  for (const [cx, cy] of corners) {
+    if (isWallBlocking(level, Math.floor(cx), Math.floor(cy))) return true;
+  }
+  return false;
+}
+
+function collidesWithEntities(level, x, y, radius) {
+  for (const ent of level.entities) {
+    if (ent.type !== 'dinosaur' || !ent.blocking || ent.state === 'dead') continue;
+    const dx = x - ent.x, dy = y - ent.y;
+    if (Math.sqrt(dx * dx + dy * dy) < radius + ent.radius) return true;
+  }
+  return false;
+}
+
+function movePlayer(level, player, dx, dy) {
+  const nx = player.x + dx;
+  const ny = player.y + dy;
+  const r = player.radius;
+  if (!collidesWithMap(level, nx, player.y, r) && !collidesWithEntities(level, nx, player.y, r)) {
+    player.x = nx;
+  }
+  if (!collidesWithMap(level, player.x, ny, r) && !collidesWithEntities(level, player.x, ny, r)) {
+    player.y = ny;
+  }
+}
+
+// ─────────────────────────────────────────────
+// 8. RAYCASTING
+// ─────────────────────────────────────────────
+function castRay(level, ox, oy, angle, maxDist) {
+  const dx = Math.cos(angle), dy = Math.sin(angle);
+  const stepX = dx < 0 ? -1 : 1, stepY = dy < 0 ? -1 : 1;
+  let mapX = Math.floor(ox), mapY = Math.floor(oy);
+
+  const deltaDX = Math.abs(dx) < 1e-10 ? 1e30 : Math.abs(1 / dx);
+  const deltaDY = Math.abs(dy) < 1e-10 ? 1e30 : Math.abs(1 / dy);
+
+  let sideDistX = dx < 0
+    ? (ox - mapX) * deltaDX
+    : (mapX + 1 - ox) * deltaDX;
+  let sideDistY = dy < 0
+    ? (oy - mapY) * deltaDY
+    : (mapY + 1 - oy) * deltaDY;
+
+  let dist = 0, side = 0;
+
+  for (let step = 0; step < 256; step++) {
+    if (sideDistX < sideDistY) {
+      dist = sideDistX; sideDistX += deltaDX; mapX += stepX; side = 0;
+    } else {
+      dist = sideDistY; sideDistY += deltaDY; mapY += stepY; side = 1;
+    }
+    if (dist > maxDist) return { hit: false, distance: maxDist, x: ox + dx * maxDist, y: oy + dy * maxDist, side, mapX, mapY };
+    const cell = cellAt(level, mapX, mapY);
+    if (!cell || cell.type === 'wall') {
+      const hitX = ox + dx * dist;
+      const hitY = oy + dy * dist;
+      return { hit: true, distance: dist, x: hitX, y: hitY, side, mapX, mapY, isVerticalSide: side === 0, cell };
+    }
+  }
+  return { hit: false, distance: maxDist, x: ox + dx * maxDist, y: oy + dy * maxDist, side: 0, mapX: Math.floor(ox + dx * maxDist), mapY: Math.floor(oy + dy * maxDist) };
+}
+
+// ─────────────────────────────────────────────
+// 9. FIRST-PERSON RENDERER
+// ─────────────────────────────────────────────
+const viewCanvas  = document.getElementById('viewCanvas');
+const viewCtx     = viewCanvas.getContext('2d');
+
+const internalCanvas = makeCanvas(INTERNAL_VIEW_WIDTH, INTERNAL_VIEW_HEIGHT);
+const iCtx = internalCanvas.getContext('2d');
+
+const depthBuffer = new Float32Array(INTERNAL_VIEW_WIDTH);
+const imageData   = iCtx.createImageData(INTERNAL_VIEW_WIDTH, INTERNAL_VIEW_HEIGHT);
+const pixels      = imageData.data;
+
+function renderFirstPerson() {
+  const { level, player } = appState;
+  const W = INTERNAL_VIEW_WIDTH, H = INTERNAL_VIEW_HEIGHT;
+  const halfH = H / 2;
+
+  // --- Floor & ceiling ---
+  const floorTex   = getTexture(level.defaultFloorTexture);
+  const ceilTex    = getTexture(level.defaultCeilingTexture);
+  const ftCtx      = floorTex.getContext('2d');
+  const ctCtx      = ceilTex.getContext('2d');
+  const ftData     = ftCtx.getImageData(0, 0, TEX_SIZE, TEX_SIZE).data;
+  const ctData     = ctCtx.getImageData(0, 0, TEX_SIZE, TEX_SIZE).data;
+
+  const rayLeft  = player.angle - player.fov / 2;
+  const rayRight = player.angle + player.fov / 2;
+  const cosLeft  = Math.cos(rayLeft),  sinLeft  = Math.sin(rayLeft);
+  const cosRight = Math.cos(rayRight), sinRight = Math.sin(rayRight);
+
+  for (let y = 0; y < H; y++) {
+    const isFloor = y >= halfH;
+    const rowD = isFloor ? y - halfH : halfH - y;
+    if (rowD === 0) continue;
+    const rowDist = (H / 2) / rowD;
+    const stepX = rowDist * (cosRight - cosLeft) / W;
+    const stepY = rowDist * (sinRight - sinLeft) / W;
+    let floorX = player.x + rowDist * cosLeft;
+    let floorY = player.y + rowDist * sinLeft;
+
+    for (let x = 0; x < W; x++) {
+      const tx = ((Math.floor(floorX * TEX_SIZE) % TEX_SIZE) + TEX_SIZE) % TEX_SIZE;
+      const ty = ((Math.floor(floorY * TEX_SIZE) % TEX_SIZE) + TEX_SIZE) % TEX_SIZE;
+      const ti = (ty * TEX_SIZE + tx) * 4;
+      const pi = (y * W + x) * 4;
+      const data = isFloor ? ftData : ctData;
+      const shade = isFloor ? 0.55 : 0.45;
+      pixels[pi]     = data[ti]     * shade;
+      pixels[pi + 1] = data[ti + 1] * shade;
+      pixels[pi + 2] = data[ti + 2] * shade;
+      pixels[pi + 3] = 255;
+      floorX += stepX; floorY += stepY;
+    }
+  }
+
+  // --- Walls ---
+  for (let col = 0; col < W; col++) {
+    const cameraX = col / W;
+    const rayAngle = rayLeft + cameraX * player.fov;
+    const hit = castRay(level, player.x, player.y, rayAngle, player.renderDistance);
+
+    const rawDist = hit.distance;
+    const corrDist = Math.max(0.1, rawDist * Math.cos(rayAngle - player.angle));
+    depthBuffer[col] = corrDist;
+
+    if (!hit.hit) continue;
+
+    const wallH = Math.min(H, H / corrDist);
+    const wallTop    = Math.floor(halfH - wallH / 2);
+    const wallBottom = Math.floor(halfH + wallH / 2);
+
+    const tex = getTexture(hit.cell ? hit.cell.wallTexture : 'wall_brick_01');
+    const texCtx = tex.getContext('2d');
+    const texData = texCtx.getImageData(0, 0, TEX_SIZE, TEX_SIZE).data;
+
+    const wallHit = hit.isVerticalSide ? hit.y % 1 : hit.x % 1;
+    const texX = clamp(Math.floor(wallHit * TEX_SIZE), 0, TEX_SIZE - 1);
+    const shadeFactor = hit.isVerticalSide ? 0.75 : 1.0;
+    const distShade = clamp(1 - corrDist / player.renderDistance, 0, 1);
+    const shade = shadeFactor * (0.3 + 0.7 * distShade);
+
+    for (let row = wallTop; row < wallBottom; row++) {
+      if (row < 0 || row >= H) continue;
+      const texY = clamp(Math.floor(((row - wallTop) / wallH) * TEX_SIZE), 0, TEX_SIZE - 1);
+      const ti = (texY * TEX_SIZE + texX) * 4;
+      const pi = (row * W + col) * 4;
+      pixels[pi]     = texData[ti]     * shade;
+      pixels[pi + 1] = texData[ti + 1] * shade;
+      pixels[pi + 2] = texData[ti + 2] * shade;
+      pixels[pi + 3] = 255;
+    }
+  }
+
+  iCtx.putImageData(imageData, 0, 0);
+
+  // --- Sprites ---
+  const alive = appState.level.entities
+    .filter(e => e.type === 'dinosaur')
+    .map(e => {
+      const dx = e.x - player.x, dy = e.y - player.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const angle = Math.atan2(dy, dx);
+      const rel = normalizeAngle(angle - player.angle);
+      return { entity: e, dist, rel };
+    })
+    .filter(s => Math.abs(s.rel) < player.fov / 2 + 0.2 && s.dist < player.renderDistance)
+    .sort((a, b) => b.dist - a.dist);
+
+  for (const { entity: e, dist, rel } of alive) {
+    const spriteId = e.state === 'dead' ? 'dino_dead_01' : e.sprite;
+    const spr = getSprite(spriteId);
+    const sprH = Math.floor(H / dist);
+    const sprW = sprH;
+    const screenX = Math.floor(W / 2 + Math.tan(rel) / Math.tan(player.fov / 2) * W / 2);
+    const sprTop    = Math.floor(H / 2 - sprH / 2);
+    const sprLeft   = screenX - sprW / 2;
+
+    const sprCtx  = spr.getContext('2d');
+    const sprData = sprCtx.getImageData(0, 0, 64, 64).data;
+
+    for (let sx = 0; sx < sprW; sx++) {
+      const col = Math.floor(sprLeft + sx);
+      if (col < 0 || col >= W) continue;
+      if (depthBuffer[col] < dist) continue;
+      const texCol = Math.floor((sx / sprW) * 64);
+      for (let sy = 0; sy < sprH; sy++) {
+        const row = sprTop + sy;
+        if (row < 0 || row >= H) continue;
+        const texRow = Math.floor((sy / sprH) * 64);
+        const ti = (texRow * 64 + texCol) * 4;
+        if (sprData[ti + 3] < 50) continue;
+        const distShade = clamp(1 - dist / player.renderDistance, 0.15, 1);
+        const pi = (row * W + col) * 4;
+        pixels[pi]     = sprData[ti]     * distShade;
+        pixels[pi + 1] = sprData[ti + 1] * distShade;
+        pixels[pi + 2] = sprData[ti + 2] * distShade;
+        pixels[pi + 3] = 255;
+      }
+    }
+  }
+
+  iCtx.putImageData(imageData, 0, 0);
+
+  // Scale to visible canvas
+  viewCtx.imageSmoothingEnabled = false;
+  viewCtx.drawImage(internalCanvas, 0, 0, viewCanvas.width, viewCanvas.height);
+}
+
+// ─────────────────────────────────────────────
+// 10. MAP RENDERER & EDITOR
+// ─────────────────────────────────────────────
+const mapCanvas = document.getElementById('mapCanvas');
+const mapCtx    = mapCanvas.getContext('2d');
+
+function worldToMap(wx, wy) {
+  const { mapZoom: z, mapOffsetX: ox, mapOffsetY: oy } = appState.editor;
+  const cs = getCellSize();
+  return { sx: wx * cs * z + ox, sy: wy * cs * z + oy };
+}
+
+function mapToWorld(sx, sy) {
+  const { mapZoom: z, mapOffsetX: ox, mapOffsetY: oy } = appState.editor;
+  const cs = getCellSize();
+  return { wx: (sx - ox) / (cs * z), wy: (sy - oy) / (cs * z) };
+}
+
+function getCellSize() {
+  const W = mapCanvas.width, H = mapCanvas.height;
+  const { level } = appState;
+  return Math.max(MAP_CELL_MIN, Math.min(W / level.width, H / level.height));
+}
+
+function renderMap() {
+  const { level, player, editor } = appState;
+  const W = mapCanvas.width, H = mapCanvas.height;
+  const cs = getCellSize() * editor.mapZoom;
+
+  mapCtx.fillStyle = '#101010';
+  mapCtx.fillRect(0, 0, W, H);
+
+  // Draw cells
+  for (let y = 0; y < level.height; y++) {
+    for (let x = 0; x < level.width; x++) {
+      const cell = cellAt(level, x, y);
+      const sx = x * cs + editor.mapOffsetX;
+      const sy = y * cs + editor.mapOffsetY;
+      if (sx + cs < 0 || sy + cs < 0 || sx > W || sy > H) continue;
+
+      if (cell.type === 'wall') {
+        const tex = appState.assets.textures[cell.wallTexture];
+        if (tex && cs >= 12) {
+          mapCtx.drawImage(tex, sx + 1, sy + 1, cs - 2, cs - 2);
+        } else {
+          mapCtx.fillStyle = '#6a4020';
+          mapCtx.fillRect(sx + 1, sy + 1, cs - 2, cs - 2);
+        }
+        mapCtx.strokeStyle = '#2a1008';
+        mapCtx.lineWidth = 1;
+        mapCtx.strokeRect(sx + 0.5, sy + 0.5, cs - 1, cs - 1);
+      } else {
+        mapCtx.fillStyle = '#1e1e1e';
+        mapCtx.fillRect(sx, sy, cs, cs);
+        mapCtx.strokeStyle = '#2a2a2a';
+        mapCtx.lineWidth = 0.5;
+        mapCtx.strokeRect(sx + 0.5, sy + 0.5, cs - 1, cs - 1);
+      }
+
+      if (editor.hoveredCellX === x && editor.hoveredCellY === y) {
+        mapCtx.strokeStyle = '#ff8800';
+        mapCtx.lineWidth = 2;
+        mapCtx.strokeRect(sx + 1, sy + 1, cs - 2, cs - 2);
+      }
+    }
+  }
+
+  // Draw dinosaurs
+  for (const ent of level.entities) {
+    if (ent.type !== 'dinosaur') continue;
+    const { sx, sy } = worldToMap(ent.x, ent.y);
+    const r = Math.max(4, ent.radius * cs * editor.mapZoom);
+    if (ent.state === 'dead') {
+      mapCtx.fillStyle = '#555';
+    } else {
+      const spr = appState.assets.sprites[ent.sprite];
+      if (spr && cs >= 14) {
+        mapCtx.drawImage(spr, sx - r, sy - r, r * 2, r * 2);
+      }
+      mapCtx.strokeStyle = ent.state === 'alert' ? '#ff4400' : '#88cc44';
+      mapCtx.lineWidth = 1.5;
+      mapCtx.beginPath();
+      mapCtx.arc(sx, sy, r, 0, Math.PI * 2);
+      mapCtx.stroke();
+    }
+    if (ent.state === 'dead') {
+      mapCtx.fillStyle = '#554444';
+      mapCtx.beginPath();
+      mapCtx.arc(sx, sy, r, 0, Math.PI * 2);
+      mapCtx.fill();
+    }
+  }
+
+  // FOV cone
+  const { sx: px, sy: py } = worldToMap(player.x, player.y);
+  const range = player.renderDistance * cs;
+  const fovStart = player.angle - player.fov / 2;
+  const fovEnd   = player.angle + player.fov / 2;
+
+  mapCtx.beginPath();
+  mapCtx.moveTo(px, py);
+  mapCtx.arc(px, py, range, fovStart, fovEnd);
+  mapCtx.closePath();
+  mapCtx.fillStyle = 'rgba(255,255,100,0.07)';
+  mapCtx.fill();
+  mapCtx.strokeStyle = 'rgba(255,255,100,0.25)';
+  mapCtx.lineWidth = 1;
+  mapCtx.stroke();
+
+  // Render distance arc
+  mapCtx.beginPath();
+  mapCtx.arc(px, py, range, 0, Math.PI * 2);
+  mapCtx.strokeStyle = 'rgba(100,200,255,0.15)';
+  mapCtx.lineWidth = 1;
+  mapCtx.stroke();
+
+  // Player direction arrow
+  const alen = cs * 0.9;
+  const adx = Math.cos(player.angle) * alen;
+  const ady = Math.sin(player.angle) * alen;
+  mapCtx.strokeStyle = '#00ffcc';
+  mapCtx.lineWidth = 2;
+  mapCtx.beginPath();
+  mapCtx.moveTo(px, py);
+  mapCtx.lineTo(px + adx, py + ady);
+  mapCtx.stroke();
+
+  // Player circle
+  const pr = Math.max(4, player.radius * cs);
+  mapCtx.fillStyle = '#00ffcc';
+  mapCtx.beginPath();
+  mapCtx.arc(px, py, pr, 0, Math.PI * 2);
+  mapCtx.fill();
+  mapCtx.strokeStyle = '#fff';
+  mapCtx.lineWidth = 1;
+  mapCtx.stroke();
+}
+
+// ─────────────────────────────────────────────
+// 11. EDITOR LOGIC
+// ─────────────────────────────────────────────
+function applyEditorAtCell(cx, cy) {
+  const { level, player, editor } = appState;
+  if (cx < 0 || cy < 0 || cx >= level.width || cy >= level.height) return;
+
+  const isBoundary = cx === 0 || cy === 0 || cx === level.width - 1 || cy === level.height - 1;
+  const playerCX = Math.floor(player.x), playerCY = Math.floor(player.y);
+  const idx = cy * level.width + cx;
+  const cell = level.cells[idx];
+
+  if (editor.selectedTool === EDITOR_TOOLS.WALL) {
+    if (isBoundary) return;
+    if (cx === playerCX && cy === playerCY) return;
+    const hasDino = level.entities.some(e => Math.floor(e.x) === cx && Math.floor(e.y) === cy && e.state !== 'dead');
+    if (hasDino) return;
+    cell.type = 'wall';
+    cell.wallTexture = editor.selectedWallTexture;
+    cell.blocking = true;
+
+  } else if (editor.selectedTool === EDITOR_TOOLS.DINOSAUR) {
+    if (cell.type === 'wall') return;
+    const hasDino = level.entities.some(e => Math.floor(e.x) === cx && Math.floor(e.y) === cy && e.state !== 'dead');
+    if (hasDino) return;
+    level.entities.push({
+      id: makeId(),
+      type: 'dinosaur',
+      x: cx + 0.5, y: cy + 0.5,
+      radius: 0.3,
+      sprite: editor.selectedDinosaurSprite,
+      health: 100,
+      state: 'idle',
+      blocking: true
+    });
+
+  } else if (editor.selectedTool === EDITOR_TOOLS.ERASE) {
+    if (isBoundary) return;
+    const dinoIdx = level.entities.findIndex(e => Math.floor(e.x) === cx && Math.floor(e.y) === cy);
+    if (dinoIdx >= 0) {
+      level.entities.splice(dinoIdx, 1);
+      return;
+    }
+    cell.type = 'empty';
+    cell.wallTexture = null;
+    cell.blocking = false;
+  }
+}
+
+// ─────────────────────────────────────────────
+// 12. COMBAT
+// ─────────────────────────────────────────────
+function shoot() {
+  const { level, player } = appState;
+  const wallHit = castRay(level, player.x, player.y, player.angle, player.renderDistance);
+  const wallDist = wallHit.distance;
+
+  let closest = null, closestDist = wallDist;
+  for (const ent of level.entities) {
+    if (ent.type !== 'dinosaur' || ent.state === 'dead') continue;
+    const dx = ent.x - player.x, dy = ent.y - player.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > closestDist) continue;
+    const angle = Math.atan2(dy, dx);
+    const rel = Math.abs(normalizeAngle(angle - player.angle));
+    if (rel > SHOOT_CONE + ent.radius / dist) continue;
+    closestDist = dist;
+    closest = ent;
+  }
+
+  // Flash
+  appState.shootFlashTimer = 0.08;
+  const flash = document.getElementById('shootFlash');
+  flash.style.opacity = '1';
+
+  if (closest) {
+    closest.health -= WEAPON_DAMAGE;
+    appState.hitMarkerTimer = 0.35;
+    if (closest.health <= 0) {
+      closest.state = 'dead';
+      closest.blocking = false;
+    }
+  }
+}
+
+// ─────────────────────────────────────────────
+// 13. INPUT HANDLING
+// ─────────────────────────────────────────────
+function setupKeyboard() {
+  window.addEventListener('keydown', e => {
+    appState.input.keys[e.code] = true;
+    if (e.code === 'Space') { e.preventDefault(); shoot(); }
+    if (e.code === 'Digit1') appState.editor.selectedTool = EDITOR_TOOLS.WALL;
+    if (e.code === 'Digit2') appState.editor.selectedTool = EDITOR_TOOLS.DINOSAUR;
+    if (e.code === 'Digit3') appState.editor.selectedTool = EDITOR_TOOLS.ERASE;
+    if (e.code === 'KeyQ') cycleTool(-1);
+    if (e.code === 'KeyE') cycleTool(1);
+    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') { e.preventDefault(); exportLevel(); }
+    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyO') { e.preventDefault(); openImport(); }
+  });
+  window.addEventListener('keyup', e => { appState.input.keys[e.code] = false; });
+}
+
+const WALL_TEXTURES = ['wall_brick_01', 'wall_metal_01', 'wall_stone_01'];
+function cycleTool(dir) {
+  const idx = WALL_TEXTURES.indexOf(appState.editor.selectedWallTexture);
+  const next = ((idx + dir) + WALL_TEXTURES.length) % WALL_TEXTURES.length;
+  appState.editor.selectedWallTexture = WALL_TEXTURES[next];
+  appState.toolbarDirty = true;
+}
+
+function updatePlayerInput(dt) {
+  const { input, level, player } = appState;
+  const k = input.keys;
+  let moved = false;
+
+  // Turning
+  const turnAmt = player.turnSpeed * dt;
+  if (k['ArrowLeft'])  { player.angle -= turnAmt; moved = true; }
+  if (k['ArrowRight']) { player.angle += turnAmt; moved = true; }
+
+  // Mobile look
+  if (input.mobileLookX !== 0) {
+    player.angle += input.mobileLookX * player.turnSpeed * dt;
+    moved = true;
+  }
+
+  // Movement
+  const speed = player.moveSpeed * dt;
+  let mx = 0, my = 0;
+
+  if (k['KeyW'] || k['ArrowUp'])   { mx += Math.cos(player.angle); my += Math.sin(player.angle); }
+  if (k['KeyS'] || k['ArrowDown']) { mx -= Math.cos(player.angle); my -= Math.sin(player.angle); }
+  if (k['KeyA']) { mx += Math.cos(player.angle - Math.PI / 2); my += Math.sin(player.angle - Math.PI / 2); }
+  if (k['KeyD']) { mx += Math.cos(player.angle + Math.PI / 2); my += Math.sin(player.angle + Math.PI / 2); }
+
+  // Mobile joystick
+  if (input.mobileMoveX !== 0 || input.mobileMoveY !== 0) {
+    const ca = Math.cos(player.angle), sa = Math.sin(player.angle);
+    mx += ca * (-input.mobileMoveY) - sa * input.mobileMoveX;
+    my += sa * (-input.mobileMoveY) + ca * input.mobileMoveX;
+  }
+
+  if (mx !== 0 || my !== 0) {
+    const len = Math.sqrt(mx * mx + my * my);
+    movePlayer(level, player, (mx / len) * speed, (my / len) * speed);
+    moved = true;
+  }
+}
+
+// Map pointer events
+let mapDrawing = false;
+
+function setupMapInput() {
+  mapCanvas.addEventListener('pointerdown', e => {
+    mapCanvas.setPointerCapture(e.pointerId);
+    appState.mapPointers[e.pointerId] = { x: e.offsetX, y: e.offsetY };
+    const keys = Object.keys(appState.mapPointers);
+    if (keys.length === 1) {
+      const { wx, wy } = mapToWorld(e.offsetX, e.offsetY);
+      const cx = Math.floor(wx), cy = Math.floor(wy);
+      mapDrawing = true;
+      applyEditorAtCell(cx, cy);
+    }
+  });
+
+  mapCanvas.addEventListener('pointermove', e => {
+    appState.mapPointers[e.pointerId] = { x: e.offsetX, y: e.offsetY };
+    const keys = Object.keys(appState.mapPointers);
+
+    if (keys.length === 2) {
+      // Pinch zoom
+      const [p1, p2] = keys.map(k => appState.mapPointers[k]);
+      const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      if (appState.mapPinchDist > 0) {
+        const ratio = dist / appState.mapPinchDist;
+        appState.editor.mapZoom = clamp(appState.editor.mapZoom * ratio, 0.3, 4);
+      }
+      appState.mapPinchDist = dist;
+      mapDrawing = false;
+    } else if (keys.length === 1) {
+      if (e.buttons === 4 || (e.buttons === 1 && e.ctrlKey)) {
+        // Pan
+        appState.editor.mapOffsetX += e.movementX;
+        appState.editor.mapOffsetY += e.movementY;
+      } else {
+        const { wx, wy } = mapToWorld(e.offsetX, e.offsetY);
+        const cx = Math.floor(wx), cy = Math.floor(wy);
+        appState.editor.hoveredCellX = cx;
+        appState.editor.hoveredCellY = cy;
+        if (mapDrawing && e.buttons === 1) {
+          applyEditorAtCell(cx, cy);
+        }
+      }
+    }
+  });
+
+  mapCanvas.addEventListener('pointerup', e => {
+    delete appState.mapPointers[e.pointerId];
+    appState.mapPinchDist = 0;
+    if (Object.keys(appState.mapPointers).length === 0) mapDrawing = false;
+  });
+  mapCanvas.addEventListener('pointercancel', e => {
+    delete appState.mapPointers[e.pointerId];
+    appState.mapPinchDist = 0;
+    mapDrawing = false;
+  });
+  mapCanvas.addEventListener('pointerleave', () => {
+    appState.editor.hoveredCellX = null;
+    appState.editor.hoveredCellY = null;
+  });
+  mapCanvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.1 : 0.9;
+    const prevZ = appState.editor.mapZoom;
+    appState.editor.mapZoom = clamp(prevZ * factor, 0.3, 4);
+    // Zoom towards mouse
+    const dx = e.offsetX - appState.editor.mapOffsetX;
+    const dy = e.offsetY - appState.editor.mapOffsetY;
+    const ratio = appState.editor.mapZoom / prevZ;
+    appState.editor.mapOffsetX = e.offsetX - dx * ratio;
+    appState.editor.mapOffsetY = e.offsetY - dy * ratio;
+  }, { passive: false });
+}
+
+// Mobile joystick & look
+function setupMobileInput() {
+  const joystickZone = document.getElementById('joystickZone');
+  const lookZone     = document.getElementById('lookZone');
+  const shootZone    = document.getElementById('shootZone');
+  const knob         = document.getElementById('joystickKnob');
+  const joystickR    = 36;
+
+  function getCenter(el) {
+    const r = el.getBoundingClientRect();
+    return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+  }
+
+  joystickZone.addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    joystickZone.setPointerCapture(e.pointerId);
+    appState.input.joystickActive = true;
+    appState.input.joystickId = e.pointerId;
+  });
+  joystickZone.addEventListener('pointermove', e => {
+    if (!appState.input.joystickActive || e.pointerId !== appState.input.joystickId) return;
+    const { cx, cy } = getCenter(joystickZone);
+    let dx = e.clientX - cx, dy = e.clientY - cy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const maxR = 36;
+    if (dist > maxR) { dx = dx / dist * maxR; dy = dy / dist * maxR; }
+    knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    appState.input.mobileMoveX = dx / maxR;
+    appState.input.mobileMoveY = dy / maxR;
+  });
+  joystickZone.addEventListener('pointerup', e => {
+    if (e.pointerId !== appState.input.joystickId) return;
+    appState.input.joystickActive = false;
+    appState.input.mobileMoveX = 0;
+    appState.input.mobileMoveY = 0;
+    knob.style.transform = 'translate(-50%, -50%)';
+  });
+
+  lookZone.addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    lookZone.setPointerCapture(e.pointerId);
+    appState.input.lookActive = true;
+    appState.input.lookId = e.pointerId;
+    appState.input.lookLastX = e.clientX;
+  });
+  lookZone.addEventListener('pointermove', e => {
+    if (!appState.input.lookActive || e.pointerId !== appState.input.lookId) return;
+    const dx = e.clientX - appState.input.lookLastX;
+    appState.input.mobileLookX = dx * 0.005;
+    appState.input.lookLastX = e.clientX;
+  });
+  lookZone.addEventListener('pointerup', e => {
+    if (e.pointerId !== appState.input.lookId) return;
+    appState.input.lookActive = false;
+    appState.input.mobileLookX = 0;
+  });
+
+  // Shoot on tap in view (excluding joystick/look zones)
+  shootZone.addEventListener('pointerdown', e => {
+    const jRect = joystickZone.getBoundingClientRect();
+    const lRect = lookZone.getBoundingClientRect();
+    const inJ = e.clientX >= jRect.left && e.clientX <= jRect.right && e.clientY >= jRect.top && e.clientY <= jRect.bottom;
+    const inL = e.clientX >= lRect.left && e.clientX <= lRect.right && e.clientY >= lRect.top && e.clientY <= lRect.bottom;
+    if (!inJ && !inL) shoot();
+  });
+}
+
+// ─────────────────────────────────────────────
+// 14. TOOLBAR
+// ─────────────────────────────────────────────
+function buildToolbar() {
+  const toolbar = document.getElementById('toolbar');
+  toolbar.innerHTML = '';
+
+  function group(label) {
+    const g = document.createElement('div');
+    g.className = 'tb-group';
+    const l = document.createElement('div');
+    l.className = 'tb-label';
+    l.textContent = label;
+    g.appendChild(l);
+    toolbar.appendChild(g);
+    return g;
+  }
+
+  function btn(parent, text, active, onClick) {
+    const b = document.createElement('button');
+    b.className = 'tb-btn' + (active ? ' active' : '');
+    b.textContent = text;
+    b.addEventListener('click', onClick);
+    parent.appendChild(b);
+    return b;
+  }
+
+  // Tools
+  const toolG = group('Tools [1-3]');
+  btn(toolG, 'Wall [1]',    appState.editor.selectedTool === 'wall',     () => { appState.editor.selectedTool = EDITOR_TOOLS.WALL;     appState.toolbarDirty = true; });
+  btn(toolG, 'Dino [2]',    appState.editor.selectedTool === 'dinosaur', () => { appState.editor.selectedTool = EDITOR_TOOLS.DINOSAUR;  appState.toolbarDirty = true; });
+  btn(toolG, 'Erase [3]',   appState.editor.selectedTool === 'erase',    () => { appState.editor.selectedTool = EDITOR_TOOLS.ERASE;     appState.toolbarDirty = true; });
+
+  // Wall textures
+  const wallG = group('Wall Texture [Q/E]');
+  for (const id of WALL_TEXTURES) {
+    const wrap = document.createElement('div');
+    wrap.className = 'tb-tex' + (appState.editor.selectedWallTexture === id ? ' active' : '');
+    wrap.title = id;
+    const tc = makeCanvas(36, 36);
+    const ttx = appState.assets.textures[id];
+    if (ttx) tc.getContext('2d').drawImage(ttx, 0, 0, 36, 36);
+    wrap.appendChild(tc);
+    wrap.addEventListener('click', () => { appState.editor.selectedWallTexture = id; appState.toolbarDirty = true; });
+    wallG.appendChild(wrap);
+  }
+
+  // Dinosaur sprites
+  const dinoG = group('Dinosaur');
+  for (const id of ['dino_raptor_01', 'dino_trex_01']) {
+    const wrap = document.createElement('div');
+    wrap.className = 'tb-tex' + (appState.editor.selectedDinosaurSprite === id ? ' active' : '');
+    wrap.title = id;
+    const sc = makeCanvas(36, 36);
+    const spr = appState.assets.sprites[id];
+    if (spr) sc.getContext('2d').drawImage(spr, 0, 0, 36, 36);
+    wrap.appendChild(sc);
+    wrap.addEventListener('click', () => { appState.editor.selectedDinosaurSprite = id; appState.toolbarDirty = true; });
+    dinoG.appendChild(wrap);
+  }
+
+  // Save/load/reset
+  const ioG = group('Level [Ctrl+S/O]');
+  btn(ioG, 'Export', false, exportLevel);
+  btn(ioG, 'Import', false, openImport);
+  btn(ioG, 'Reset',  false, () => { if (confirm('Reset level?')) resetLevel(); });
+
+  appState.toolbarDirty = false;
+}
+
+// ─────────────────────────────────────────────
+// 15. SAVE / LOAD
+// ─────────────────────────────────────────────
+function exportLevel() {
+  const json = JSON.stringify(appState.level, null, 2);
+  const modal = document.getElementById('modal');
+  const textarea = document.getElementById('modalTextarea');
+  const ok = document.getElementById('modalOk');
+  const title = document.getElementById('modalTitle');
+  const err = document.getElementById('modalError');
+  title.textContent = 'Export Level JSON (copy or download)';
+  textarea.value = json;
+  err.textContent = '';
+  ok.textContent = 'Download';
+  modal.classList.add('open');
+  textarea.select();
+
+  ok.onclick = () => {
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'level.json'; a.click();
+    URL.revokeObjectURL(url);
+    modal.classList.remove('open');
+  };
+}
+
+function openImport() {
+  const modal = document.getElementById('modal');
+  const textarea = document.getElementById('modalTextarea');
+  const ok = document.getElementById('modalOk');
+  const title = document.getElementById('modalTitle');
+  const err = document.getElementById('modalError');
+  title.textContent = 'Import Level JSON';
+  textarea.value = '';
+  err.textContent = '';
+  ok.textContent = 'Load';
+  modal.classList.add('open');
+
+  ok.onclick = () => {
+    const result = validateAndLoadLevel(textarea.value);
+    if (result.ok) {
+      modal.classList.remove('open');
+    } else {
+      err.textContent = result.error;
+    }
+  };
+}
+
+function validateAndLoadLevel(jsonStr) {
+  let data;
+  try { data = JSON.parse(jsonStr); }
+  catch (e) { return { ok: false, error: 'Invalid JSON: ' + e.message }; }
+
+  if (!Number.isInteger(data.width) || data.width <= 0) return { ok: false, error: 'Invalid width.' };
+  if (!Number.isInteger(data.height) || data.height <= 0) return { ok: false, error: 'Invalid height.' };
+  if (!Array.isArray(data.cells) || data.cells.length !== data.width * data.height) return { ok: false, error: 'Cell array size mismatch.' };
+  if (!data.playerStart || data.playerStart.x < 0 || data.playerStart.y < 0 ||
+      data.playerStart.x >= data.width || data.playerStart.y >= data.height) {
+    return { ok: false, error: 'Player start out of bounds.' };
+  }
+  const psCell = data.cells[Math.floor(data.playerStart.y) * data.width + Math.floor(data.playerStart.x)];
+  if (!psCell || psCell.blocking) return { ok: false, error: 'Player start inside wall.' };
+
+  if (!Array.isArray(data.entities)) data.entities = [];
+
+  for (const cell of data.cells) {
+    if (cell.wallTexture && !textureDefinitions[cell.wallTexture] && cell.wallTexture !== null) {
+      cell.wallTexture = 'wall_brick_01';
+    }
+  }
+  for (const ent of data.entities) {
+    if (!spriteDefinitions[ent.sprite]) ent.sprite = 'dino_raptor_01';
+  }
+
+  appState.level = data;
+  appState.player = createPlayer(data.playerStart);
+  return { ok: true };
+}
+
+function resetLevel() {
+  appState.level = createDefaultLevel();
+  appState.player = createPlayer(appState.level.playerStart);
+  appState.editor.mapZoom = 1;
+  appState.editor.mapOffsetX = 0;
+  appState.editor.mapOffsetY = 0;
+}
+
+// ─────────────────────────────────────────────
+// 16. CANVAS RESIZE
+// ─────────────────────────────────────────────
+function resizeCanvases() {
+  const vr = viewCanvas.getBoundingClientRect();
+  viewCanvas.width  = Math.floor(vr.width)  || 480;
+  viewCanvas.height = Math.floor(vr.height) || 270;
+
+  const mr = mapCanvas.getBoundingClientRect();
+  mapCanvas.width  = Math.floor(mr.width)  || 480;
+  mapCanvas.height = Math.floor(mr.height) || 480;
+}
+
+// ─────────────────────────────────────────────
+// 17. MODAL SETUP
+// ─────────────────────────────────────────────
+function setupModal() {
+  const modal  = document.getElementById('modal');
+  const cancel = document.getElementById('modalCancel');
+  cancel.addEventListener('click', () => modal.classList.remove('open'));
+  modal.addEventListener('pointerdown', e => {
+    if (e.target === modal) modal.classList.remove('open');
+  });
+
+  // File input for import
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = '.json,application/json';
+  fileInput.style.display = 'none';
+  document.body.appendChild(fileInput);
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const textarea = document.getElementById('modalTextarea');
+      textarea.value = ev.target.result;
+    };
+    reader.readAsText(file);
+    fileInput.value = '';
+  });
+  window._fileInput = fileInput;
+}
+
+// Draw hit marker
+function drawHitMarker(canvas, active) {
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!active) return;
+  const s = canvas.width;
+  ctx.strokeStyle = '#ff4400';
+  ctx.lineWidth = 2;
+  const g = s / 3;
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(g, g); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(s, 0); ctx.lineTo(s - g, g); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, s); ctx.lineTo(g, s - g); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(s, s); ctx.lineTo(s - g, s - g); ctx.stroke();
+}
+
+// ─────────────────────────────────────────────
+// 18. MAIN LOOP
+// ─────────────────────────────────────────────
+let lastTime = performance.now();
+
+function frame(now) {
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  // Toolbar rebuild if dirty
+  if (appState.toolbarDirty) buildToolbar();
+
+  // FPS
+  appState.fpsFrames++;
+  appState.fpsTime += dt;
+  if (appState.fpsTime >= 0.5) {
+    appState.fps = Math.round(appState.fpsFrames / appState.fpsTime);
+    appState.fpsFrames = 0;
+    appState.fpsTime = 0;
+    document.getElementById('fpsCounter').textContent = appState.fps + ' FPS';
+  }
+
+  updatePlayerInput(dt);
+
+  // Shoot flash
+  if (appState.shootFlashTimer > 0) {
+    appState.shootFlashTimer -= dt;
+    if (appState.shootFlashTimer <= 0) {
+      document.getElementById('shootFlash').style.opacity = '0';
+    }
+  }
+
+  // Hit marker
+  const hm = document.getElementById('hitMarker');
+  if (appState.hitMarkerTimer > 0) {
+    appState.hitMarkerTimer -= dt;
+    hm.style.opacity = String(clamp(appState.hitMarkerTimer / 0.35, 0, 1));
+    drawHitMarker(hm, true);
+  } else {
+    hm.style.opacity = '0';
+  }
+
+  // Mobile look decay
+  appState.input.mobileLookX *= 0.85;
+
+  renderFirstPerson();
+  renderMap();
+
+  requestAnimationFrame(frame);
+}
+
+// ─────────────────────────────────────────────
+// 19. INIT
+// ─────────────────────────────────────────────
+function init() {
+  loadAssets();
+  appState.level  = createDefaultLevel();
+  appState.player = createPlayer(appState.level.playerStart);
+
+  resizeCanvases();
+  window.addEventListener('resize', () => {
+    resizeCanvases();
+    // Re-center map
+    appState.editor.mapOffsetX = 0;
+    appState.editor.mapOffsetY = 0;
+  });
+
+  setupKeyboard();
+  setupMapInput();
+  setupMobileInput();
+  setupModal();
+  buildToolbar();
+
+  // Center map view
+  appState.editor.mapOffsetX = 0;
+  appState.editor.mapOffsetY = 0;
+
+  requestAnimationFrame(frame);
+}
+
+init();
+</script>
+</body>
+</html>
